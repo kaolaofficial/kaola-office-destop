@@ -12,6 +12,21 @@ on:
           - all
           - windows
           - macos
+      publish_and_sync:
+        description: 'Đăng GitHub Release, đẩy FTP download.kaola.vn & đồng bộ WordPress'
+        required: true
+        default: true
+        type: boolean
+      version:
+        description: 'Phiên bản (VD: 2.0.1 — để trống tự lấy từ app/kaola_config.js)'
+        required: false
+        default: ''
+        type: string
+      changelog:
+        description: 'Ghi chú phát hành (tùy chọn)'
+        required: false
+        default: ''
+        type: string
   push:
     tags:
       - 'v*'
@@ -22,7 +37,7 @@ permissions:
 jobs:
   build-windows:
     name: Build Windows Installer (.exe)
-    if: inputs.target == 'all' || inputs.target == 'windows' || startsWith(github.ref, 'refs/tags/') || inputs.target == ''
+    if: startsWith(github.ref, 'refs/tags/') || inputs.target == 'all' || inputs.target == 'windows' || inputs.target == ''
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -52,7 +67,7 @@ jobs:
 
   build-macos:
     name: Build macOS DMGs (Apple Silicon & Intel)
-    if: inputs.target == 'all' || inputs.target == 'macos' || startsWith(github.ref, 'refs/tags/') || inputs.target == ''
+    if: startsWith(github.ref, 'refs/tags/') || inputs.target == 'all' || inputs.target == 'macos' || inputs.target == ''
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -84,9 +99,16 @@ jobs:
           retention-days: 14
 
   publish-and-sync:
-    name: Publish GitHub Release & Sync to WordPress
+    name: Publish Release, Deploy to download.kaola.vn & Sync WordPress
     needs: [build-windows, build-macos]
-    if: startsWith(github.ref, 'refs/tags/')
+    if: |
+      always() &&
+      (startsWith(github.ref, 'refs/tags/') || inputs.publish_and_sync == true) &&
+      (needs.build-windows.result == 'success' || needs.build-macos.result == 'success') &&
+      needs.build-windows.result != 'failure' &&
+      needs.build-macos.result != 'failure' &&
+      needs.build-windows.result != 'cancelled' &&
+      needs.build-macos.result != 'cancelled'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -96,114 +118,252 @@ jobs:
         run: mkdir -p release_assets
 
       - name: Download Windows Artifact
+        if: needs.build-windows.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: KaolaOffice-Windows-Setup
           path: release_assets/
 
       - name: Download macOS Artifacts
+        if: needs.build-macos.result == 'success'
         uses: actions/download-artifact@v4
         with:
           name: KaolaOffice-macOS-DMG
           path: release_assets/
 
-      - name: Parse Version and Tag
+      - name: Resolve Version, Tag & Sync Mode
         id: vars
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          WIN_RESULT: ${{ needs.build-windows.result }}
+          MAC_RESULT: ${{ needs.build-macos.result }}
         run: |
-          TAG_NAME="${GITHUB_REF#refs/tags/}"
-          VERSION="${TAG_NAME#v}"
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+            VERSION="${TAG_NAME#v}"
+          else
+            RAW_VER="${INPUT_VERSION#v}"
+            RAW_VER="${RAW_VER#V}"
+            if [ -z "$RAW_VER" ]; then
+              RAW_VER=$(python3 - <<'PY'
+          import json, re, pathlib
+          cfg = pathlib.Path("app/kaola_config.js").read_text(encoding="utf-8")
+          m = re.search(r"appVersion\s*:\s*['\"]([^'\"]+)['\"]", cfg)
+          if m:
+              print(m.group(1).strip())
+          else:
+              pkg = json.loads(pathlib.Path("package.json").read_text(encoding="utf-8"))
+              print(str(pkg.get("version", "2.0.1")).strip())
+          PY
+              )
+            fi
+            VERSION="$RAW_VER"
+            TAG_NAME="v${VERSION}"
+          fi
+
+          if [ "$WIN_RESULT" = "success" ] && [ "$MAC_RESULT" = "success" ]; then
+            MERGE_FILES="false"
+          else
+            MERGE_FILES="true"
+          fi
+
+          ASSET_COUNT=$(find release_assets -maxdepth 1 -type f | wc -l)
+          if [ "$ASSET_COUNT" -eq 0 ]; then
+            echo "::error::Không tìm thấy tệp cài đặt nào trong release_assets/."
+            exit 1
+          fi
+
           echo "tag=$TAG_NAME" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Release Tag: $TAG_NAME, Clean Version: $VERSION"
-          ls -la release_assets/
+          echo "merge_files=$MERGE_FILES" >> "$GITHUB_OUTPUT"
+          echo "Release Tag: $TAG_NAME | Version: $VERSION | Merge Mode: $MERGE_FILES | Assets: $ASSET_COUNT"
+          ls -lh release_assets/
 
-      - name: Create GitHub Release
+      - name: Publish to GitHub Release
         id: create_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.vars.outputs.tag }}
           name: Kaola Office ${{ steps.vars.outputs.tag }}
           generate_release_notes: true
-          files: |
-            release_assets/KaolaOffice_Setup.exe
-            release_assets/KaolaOffice_macOS_arm64.dmg
-            release_assets/KaolaOffice_macOS_x86_64.dmg
+          files: release_assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Deploy Installer Files to download.kaola.vn (Optional FTP)
-        if: env.FTP_SERVER != ''
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
-        with:
-          server: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          local-dir: release_assets/
-          server-dir: ${{ secrets.FTP_TARGET_DIR || '/' }}
+      - name: Upload Installer Files to download.kaola.vn (FTP)
         env:
           FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_USERNAME: ${{ secrets.FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_TARGET_DIR: ${{ secrets.FTP_TARGET_DIR }}
+          DOWNLOAD_BASE_URL: ${{ secrets.DOWNLOAD_BASE_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$FTP_SERVER" ] || [ -z "$FTP_USERNAME" ] || [ -z "$FTP_PASSWORD" ]; then
+            echo "::error::Thiếu cấu hình FTP Secrets trên GitHub Repository! Vui lòng cấu hình FTP_SERVER, FTP_USERNAME, FTP_PASSWORD (và FTP_TARGET_DIR nếu cần) để đẩy file lên download.kaola.vn."
+            exit 1
+          fi
+
+          FTP_HOST="${FTP_SERVER#ftp://}"
+          FTP_HOST="${FTP_HOST#ftps://}"
+          FTP_HOST="${FTP_HOST%/}"
+
+          CLEAN_DIR="${FTP_TARGET_DIR#/}"
+          CLEAN_DIR="${CLEAN_DIR%/}"
+
+          BASE_URL="${DOWNLOAD_BASE_URL:-https://download.kaola.vn}"
+          BASE_URL="${BASE_URL%/}"
+
+          for FILE in release_assets/*; do
+            [ -f "$FILE" ] || continue
+            BASENAME=$(basename "$FILE")
+            if [ -n "$CLEAN_DIR" ]; then
+              REMOTE_URL="ftp://${FTP_HOST}/${CLEAN_DIR}/${BASENAME}"
+            else
+              REMOTE_URL="ftp://${FTP_HOST}/${BASENAME}"
+            fi
+
+            echo "Uploading ${BASENAME} to ${FTP_HOST}/${CLEAN_DIR:+${CLEAN_DIR}/}${BASENAME}..."
+            if ! curl --fail --show-error --silent --ssl --insecure --ftp-create-dirs \
+              --retry 3 --retry-delay 5 \
+              --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
+              -T "$FILE" "$REMOTE_URL"; then
+              echo "::warning::FTPS thất bại cho ${BASENAME}, thử lại qua kết nối FTP tiêu chuẩn..."
+              curl --fail --show-error --silent --ftp-create-dirs \
+                --retry 3 --retry-delay 5 \
+                --user "${FTP_USERNAME}:${FTP_PASSWORD}" \
+                -T "$FILE" "$REMOTE_URL"
+            fi
+
+            PUBLIC_URL="${BASE_URL}/${BASENAME}"
+            HTTP_CODE=$(curl -sS -L -o /dev/null -w "%{http_code}" -r 0-0 "$PUBLIC_URL" || echo "000")
+            echo "Verified public URL: ${PUBLIC_URL} -> HTTP ${HTTP_CODE}"
+            if [ "$HTTP_CODE" != "200" ] && [ "$HTTP_CODE" != "206" ]; then
+              echo "::error::Upload FTP hoàn tất nhưng không truy cập được ${PUBLIC_URL} (HTTP ${HTTP_CODE}). Kiểm tra lại FTP_TARGET_DIR và DOWNLOAD_BASE_URL."
+              exit 1
+            fi
+          done
 
       - name: Trigger Webhook to Kaola Website (WordPress)
         env:
           KAOLA_RELEASE_SECRET: ${{ secrets.KAOLA_RELEASE_SECRET }}
           KAOLA_WEBHOOK_URL: ${{ secrets.KAOLA_WEBHOOK_URL }}
+          DOWNLOAD_BASE_URL: ${{ secrets.DOWNLOAD_BASE_URL }}
           TAG_NAME: ${{ steps.vars.outputs.tag }}
           VERSION: ${{ steps.vars.outputs.version }}
+          MERGE_FILES: ${{ steps.vars.outputs.merge_files }}
+          INPUT_CHANGELOG: ${{ inputs.changelog }}
         run: |
-          WEBHOOK_URL="${KAOLA_WEBHOOK_URL:-https://kaola.vn/wp-json/kaola-rm/v1/webhook/release}"
-          
-          if [ -z "$KAOLA_RELEASE_SECRET" ]; then
-            echo "[WARNING] KAOLA_RELEASE_SECRET secret is not configured in GitHub Repository Settings. Skipping webhook notification."
-            exit 0
-          fi
-          
-          echo "Sending release webhook to $WEBHOOK_URL for version $VERSION..."
-          
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$WEBHOOK_URL" \
-            -H "Content-Type: application/json" \
-            -H "X-Kaola-Secret: $KAOLA_RELEASE_SECRET" \
-            -d @- << EOF
-          {
-            "slug": "kaola-office",
-            "version": "${VERSION}",
-            "title": "Kaola Office ${TAG_NAME}",
-            "channel": "stable",
-            "changelog": "Bản phát hành tự động ${TAG_NAME} đa nền tảng (Windows x64, macOS Apple Silicon, macOS Intel).",
-            "files": [
-              {
-                "platform": "windows_x64",
-                "file_label": "Windows (64-bit)",
-                "file_name": "KaolaOffice_Setup.exe",
-                "file_source": "external",
-                "file_url": "https://download.kaola.vn/KaolaOffice_Setup.exe"
-              },
-              {
-                "platform": "mac_arm64",
-                "file_label": "macOS (Apple Silicon M1/M2/M3/M4)",
-                "file_name": "KaolaOffice_macOS_arm64.dmg",
-                "file_source": "external",
-                "file_url": "https://download.kaola.vn/KaolaOffice_macOS_arm64.dmg"
-              },
-              {
-                "platform": "mac_intel",
-                "file_label": "macOS (Intel x86_64)",
-                "file_name": "KaolaOffice_macOS_x86_64.dmg",
-                "file_source": "external",
-                "file_url": "https://download.kaola.vn/KaolaOffice_macOS_x86_64.dmg"
-              }
-            ]
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import pathlib
+          import sys
+          import urllib.error
+          import urllib.request
+
+          secret = os.environ.get("KAOLA_RELEASE_SECRET", "").strip()
+          if not secret:
+              print("::error::Thiếu secret KAOLA_RELEASE_SECRET trong GitHub Repository Settings.")
+              sys.exit(1)
+
+          webhook_url = os.environ.get("KAOLA_WEBHOOK_URL", "").strip() or "https://kaola.vn/wp-json/kaola-rm/v1/webhook/release"
+          base_url = (os.environ.get("DOWNLOAD_BASE_URL", "").strip() or "https://download.kaola.vn").rstrip("/")
+          tag_name = os.environ["TAG_NAME"]
+          version = os.environ["VERSION"]
+          merge_files = os.environ.get("MERGE_FILES", "false").lower() == "true"
+          custom_changelog = os.environ.get("INPUT_CHANGELOG", "").strip()
+
+          catalog = [
+              ("KaolaOffice_Setup.exe", "windows_x64", "Windows (64-bit)"),
+              ("KaolaOffice_macOS_arm64.dmg", "mac_arm64", "macOS (Apple Silicon M1/M2/M3/M4)"),
+              ("KaolaOffice_macOS_x86_64.dmg", "mac_intel", "macOS (Intel x86_64)"),
+          ]
+
+          assets_dir = pathlib.Path("release_assets")
+          files_payload = []
+
+          for filename, platform, label in catalog:
+              fpath = assets_dir / filename
+              if not fpath.is_file():
+                  continue
+              size_bytes = fpath.stat().st_size
+              h = hashlib.sha256()
+              with fpath.open("rb") as fh:
+                  for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                      h.update(chunk)
+              sha256_hex = h.hexdigest()
+              file_url = f"{base_url}/{filename}"
+              files_payload.append({
+                  "platform": platform,
+                  "file_label": label,
+                  "file_name": filename,
+                  "file_source": "external",
+                  "file_url": file_url,
+                  "file_size": size_bytes,
+                  "file_hash": sha256_hex,
+              })
+              print(f"Prepared [{platform}] {filename} | {size_bytes:,} bytes | SHA256={sha256_hex} | {file_url}")
+
+          if not files_payload:
+              print("::error::Không có file cài đặt hợp lệ nào để gửi sang WordPress.")
+              sys.exit(1)
+
+          if custom_changelog:
+              changelog = custom_changelog
+          elif merge_files:
+              changelog = ""
+          else:
+              changelog = f"Bản phát hành tự động {tag_name} đa nền tảng (Windows x64, macOS Apple Silicon, macOS Intel)."
+
+          payload = {
+              "slug": "kaola-office",
+              "version": version,
+              "title": f"Kaola Office {tag_name}",
+              "channel": "stable",
+              "changelog": changelog,
+              "merge_files": merge_files,
+              "files": files_payload,
           }
-          EOF
+
+          data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+          req = urllib.request.Request(
+              webhook_url,
+              data=data,
+              headers={
+                  "Content-Type": "application/json",
+                  "Accept": "application/json",
+                  "X-Kaola-Secret": secret,
+                  "User-Agent": "KaolaOffice-GitHubActions/2.0",
+              },
+              method="POST",
           )
-          
-          HTTP_BODY=$(echo "$RESPONSE" | sed '$d')
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          
-          echo "Webhook response status: $HTTP_CODE"
-          echo "Webhook response body: $HTTP_BODY"
-          
-          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
-            echo "[SUCCESS] Release synchronized to Kaola website successfully!"
-          else
-            echo "[ERROR] Failed to synchronize release to website (HTTP $HTTP_CODE)."
-          fi
+
+          print(f"Sending webhook to {webhook_url} (version={version}, merge_files={merge_files}, files={len(files_payload)})...")
+          try:
+              with urllib.request.urlopen(req, timeout=30) as resp:
+                  status = resp.getcode()
+                  body = resp.read().decode("utf-8", errors="replace")
+          except urllib.error.HTTPError as exc:
+              body = exc.read().decode("utf-8", errors="replace")
+              print(f"::error::Webhook thất bại (HTTP {exc.code}): {body}")
+              sys.exit(1)
+          except Exception as exc:
+              print(f"::error::Không thể kết nối Webhook {webhook_url}: {exc}")
+              sys.exit(1)
+
+          print(f"Webhook response HTTP {status}: {body}")
+          try:
+              parsed = json.loads(body)
+          except Exception:
+              parsed = {}
+
+          if not (200 <= status < 300) or parsed.get("success") is not True:
+              print(f"::error::WordPress trả về kết quả không hợp lệ: {body}")
+              sys.exit(1)
+
+          print(f"[SUCCESS] Đồng bộ Kaola Office {tag_name} lên WordPress thành công! Platforms: {parsed.get('platforms')}")
+          PY
