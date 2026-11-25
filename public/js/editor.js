@@ -22,9 +22,11 @@
     const params = new URLSearchParams(window.location.search);
     currentFile = decodeURIComponent(params.get('file') || 'Tai_lieu_moi.docx');
     currentType = params.get('type') || 'word';
-    const defaultDocServer = typeof window !== 'undefined' && window.location.protocol === 'https:'
-      ? 'https://docs.kaola.vn'
-      : 'http://localhost:8080';
+    const defaultDocServer = (typeof window !== 'undefined' && window.KaolaConfig && window.KaolaConfig.docsUrl)
+      ? window.KaolaConfig.docsUrl
+      : (typeof window !== 'undefined' && window.location.protocol === 'https:'
+        ? 'https://docs.kaola.vn'
+        : 'http://localhost:8080');
     serverUrl = decodeURIComponent(params.get('server') || localStorage.getItem('kaola_doc_server') || defaultDocServer);
 
     // Cập nhật giao diện topbar

@@ -50,6 +50,8 @@ def extract_missing(zip_path, target_dir):
     with zipfile.ZipFile(zip_path, 'r') as zf:
         extracted_count = 0
         for member in zf.namelist():
+            if "{AA2EA9B6-9EC2-415F-9762-634EE8D9A95E}" in member or "{9DC93CDB-B576-4F0C-B55E-FCC9C48DD007}" in member:
+                continue
             target_path = os.path.join(target_dir, member)
             if not os.path.exists(target_path):
                 zf.extract(member, target_dir)

@@ -141,21 +141,24 @@
     });
   }
 
-  // Tải cấu hình thông báo thời gian thực từ máy chủ SaaS (chung điểm đến với banner)
+  // Tải cấu hình thông báo thời gian thực từ Kaola ID (chung điểm đến với banner quảng cáo)
   async function fetchRemoteBroadcasts() {
     try {
-      const endpoints = [
-        'https://work.kaola.vn/api/v1/office/init',
-        'https://kaola.vn/api/v1/office/init'
-      ];
+      const cfg = (typeof window !== 'undefined' && window.KaolaConfig) || null;
+      const endpoints = (cfg && typeof cfg.getInitUrls === 'function')
+        ? cfg.getInitUrls()
+        : ['https://id.kaola.vn/api/v1/office/init'];
       for (const url of endpoints) {
         try {
           const resp = await fetch(url, { 
             method: 'GET', 
             cache: 'no-cache',
-            signal: AbortSignal.timeout ? AbortSignal.timeout(1200) : undefined
+            headers: { 'Accept': 'application/json' },
+            signal: AbortSignal.timeout ? AbortSignal.timeout(2500) : undefined
           });
           if (resp.ok) {
+            const ct = resp.headers.get('content-type') || '';
+            if (!ct.includes('application/json')) continue;
             const data = await resp.json();
             const list = data.broadcasts || (Array.isArray(data) ? data : null);
             if (Array.isArray(list) && list.length > 0) {

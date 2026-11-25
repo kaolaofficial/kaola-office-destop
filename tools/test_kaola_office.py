@@ -146,14 +146,16 @@ def run_tests():
     else:
         print(f"[FAIL] Test 9: Ngôn ngữ Tiếng Việt chưa đồng bộ (locale.js: {has_locale_vi}, index.html: {has_index_vi}, vi.json: {vi_json_clean}, registry: {reg_vi}).")
 
-    # Test 10: Kiểm tra đấu nối cổng thanh toán KaolaPay (pay.kaola.vn / kaolapay.test)
+    # Test 10: Kiểm tra đấu nối thanh toán an toàn Kaola ID (không SECRET_KEY, không hardcode gói/STK)
     total += 1
     with open(os.path.join(APP_DIR, "kaola_account.js"), 'r', encoding='utf-8') as f:
         acc_js = f.read()
-    has_pay_url = "kaolapay.test" in acc_js or "pay.kaola.vn" in acc_js
-    has_pro_plan = "office_pro_1y" in acc_js
-    has_hmac = "generateHmacSha256" in acc_js
-    has_checkout_fn = "initiatePayment" in acc_js
+    with open(os.path.join(APP_DIR, "kaola_config.js"), 'r', encoding='utf-8') as f:
+        cfg_js = f.read()
+    has_config_loaded = "kaola_config.js" in idx_content and "https://id.kaola.vn" in cfg_js
+    has_kaola_id_catalog = "/api/v1/ecosystem/packages?service=office" in acc_js and "let PLANS = {};" in acc_js
+    has_safe_checkout = "/api/v1/checkout/package-sessions" in acc_js and "initiatePayment" in acc_js
+    no_secret_key = "SECRET_KEY" not in acc_js and "kaola_sk_office_" not in acc_js and "19036788888888" not in acc_js
 
     # Kiểm tra database kaolapay có app kaolaoffice
     has_db_app = False
@@ -167,11 +169,11 @@ def run_tests():
     except Exception:
         pass
 
-    if has_pay_url and has_pro_plan and has_hmac and has_checkout_fn and has_db_app:
-        print("[PASS] Test 10: Cổng thanh toán KaolaPay đã đấu nối thành công (API sessions, VietQR, HMAC SHA256 & DB connected_apps).")
+    if has_config_loaded and has_kaola_id_catalog and has_safe_checkout and no_secret_key and has_db_app:
+        print("[PASS] Test 10: Cấu hình tập trung KaolaConfig, bảng giá động Kaola ID & thanh toán không SECRET_KEY phía client đã sẵn sàng.")
         passed += 1
     else:
-        print(f"[FAIL] Test 10: Đấu nối KaolaPay chưa hoàn chỉnh (pay_url: {has_pay_url}, plans: {has_pro_plan}, hmac: {has_hmac}, db: {has_db_app}).")
+        print(f"[FAIL] Test 10: Đấu nối KaolaPay/Kaola ID chưa hoàn chỉnh (config: {has_config_loaded}, catalog: {has_kaola_id_catalog}, safe_checkout: {has_safe_checkout}, no_secret: {no_secret_key}, db: {has_db_app}).")
 
     # Test 11: Kiểm tra nhúng mã nhân viên tư vấn Kaola AI (widget.js) vào màn hình chính và 5 trình biên tập
     total += 1

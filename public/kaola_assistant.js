@@ -53,7 +53,7 @@
       const raw = localStorage.getItem('kaola_account_user');
       if (raw) {
         const u = JSON.parse(raw);
-        if (u && (u.is_vip || u.vip || u.is_internal || (u.email && u.email.endsWith('@kaola.vn')) || u.plan_code === 'office_internal')) {
+        if (u && (u.is_vip || u.vip)) {
           return true;
         }
       }
@@ -127,7 +127,11 @@
     // Cấu trúc: [BẢN ĐÃ SỬA CHÍNH TẢ & HOÀN THIỆN]: "..." hoặc [BẢN ĐÃ HIỆU ĐÍNH]:\n...
     const spellMatch = text.match(/(?:\[(?:BẢN ĐÃ SỬA CHÍNH TẢ|BẢN ĐÃ HIỆU ĐÍNH|BẢN ĐÃ CHUẨN HÓA|BẢN DỊCH)[^\]]*\])[*:]*\s*[\r\n]+["“]?([\s\S]+?)["”]?(?=\r?\n\r?\n|\r?\n(?:🔍|\*\*🔍|\[|\*|CHI TIẾT|LƯU Ý|💡|$))/i);
     if (spellMatch && spellMatch[1] && spellMatch[1].trim().length > 0) {
-      return spellMatch[1].trim().replace(/^["“”']+|["“”']+$/g, '').trim();
+      const extracted = spellMatch[1].trim().replace(/^["“”']+|["“”']+$/g, '').trim();
+      // Chặn tuyệt đối các chuỗi placeholder kiểu {văn bản...} để không bao giờ ghi đè hỏng tài liệu
+      if (!/^\{[^}]*văn bản[^}]*\}$/i.test(extracted) && !/^\[[^\]]*văn bản[^\]]*\]$/i.test(extracted)) {
+        return extracted;
+      }
     }
 
     // 1. Trích xuất code block nếu có
@@ -199,7 +203,10 @@
     }
 
     let result = cleanedLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-    return result || text;
+    if (/^\{[^}]*văn bản[^}]*\}$/i.test(result)) {
+      return '';
+    }
+    return result || '';
   }
 
   // 1. Lấy văn bản đang bôi đen trong tài liệu (Lấy trọn vẹn cả đoạn dài / nhiều trang)
@@ -261,6 +268,7 @@
   function insertTextToDocument(text) {
     if (!text) return false;
     const cleanText = cleanContentForInsertion(text);
+    if (!cleanText) return false;
     const editor = getEditorCore();
     const api = getEditorApi();
     let success = false;
@@ -314,6 +322,7 @@
   function replaceSelectedTextInDocument(text) {
     if (!text) return false;
     const cleanText = cleanContentForInsertion(text);
+    if (!cleanText) return false;
     const editor = getEditorCore();
     const api = getEditorApi();
 
@@ -480,12 +489,12 @@
         <div class="kaola-bubble-header">
           <div class="kaola-bubble-author">
             <span class="kaola-bubble-badge">COPILOT</span>
-            <span class="kaola-bubble-name">Hoàng Linh • Trợ Lý Soạn Thảo</span>
+            <span class="kaola-bubble-name">Kaola AI Copilot</span>
           </div>
           <button type="button" class="kaola-bubble-close" id="kaola-bubble-close" title="Thu gọn">×</button>
         </div>
         <div class="kaola-bubble-body" id="kaola-bubble-body">
-          Dạ em chào anh/chị ạ! Em là Trợ lý Soạn thảo Kaola Office Copilot. Em có thể đọc văn bản bôi đen trong tài liệu, tóm tắt ý chính, sửa lỗi chính tả, chuẩn hóa văn phong và viết công thức Excel giúp anh/chị! ✨
+          Dạ em chào anh/chị ạ! Em là Kaola AI Copilot. Em có thể đọc văn bản bôi đen trong tài liệu, tóm tắt ý chính, sửa lỗi chính tả, chuẩn hóa văn phong và viết công thức Excel giúp anh/chị! ✨
         </div>
         <div class="kaola-bubble-actions">
           <button type="button" class="kaola-bubble-btn primary" id="kaola-bubble-btn-chat">
@@ -1010,7 +1019,13 @@
 
   function showSelectionFloatingBar(text) {
     const bar = document.getElementById('kaola-selection-floating-bar');
+    const chatbox = document.getElementById('kaola-assistant-chatbox');
     if (!bar || isFloatingBarDismissed) return;
+    // Không hiện thanh nổi đè lên khung chat khi người dùng đang mở hộp thoại Kaola Copilot
+    if (chatbox && (chatbox.classList.contains('open') || chatbox.classList.contains('active'))) {
+      bar.style.display = 'none';
+      return;
+    }
 
     let x = lastMouseX;
     let y = lastMouseY;
@@ -1062,24 +1077,25 @@
     hideSelectionFloatingBar();
     openChat();
     const prompt = `Bạn là Chuyên gia Hiệu đính và Ngôn ngữ học cao cấp của Kaola Office.
-Hãy kiểm tra và sửa toàn bộ lỗi chính tả, dấu thanh tiếng Việt (lỗi gõ Telex), lỗi từ ngữ, dấu câu và ngữ pháp cho đoạn văn bản được bôi đen sau đây.
+Hãy kiểm tra và sửa toàn bộ lỗi chính tả, dấu thanh tiếng Việt (lỗi gõ Telex, ký tự thừa trong số/từ), lỗi từ ngữ, dấu câu và ngữ pháp cho đoạn văn bản được bôi đen sau đây.
 
 YÊU CẦU QUAN TRỌNG:
 1. TỰ ĐỘNG NHẬN DIỆN NGÔN NGỮ: Tự động nhận diện văn bản là Tiếng Việt, Tiếng Anh hay Hỗn hợp Song ngữ.
-2. SỬA LỖI CHÍNH TẢ & DẤU THANH: Sửa triệt để các lỗi đánh máy, nhầm dấu (ngã/hỏi, s/x, d/gi/r, ch/tr, l/n, c/k...), lỗi gõ tắt Telex (vd: 'chính ta' -> 'chính tả', 'đoạn vặn' -> 'đoạn văn', 'sư lí' -> 'xử lý', 'kiêm tra' -> 'kiểm tra').
-3. BẢO TỒN THUẬT NGỮ: Giữ nguyên các thuật ngữ tiếng Anh, tên riêng, tên thương hiệu, mã số, từ viết tắt công nghệ/kinh doanh (vd: AI, Office, CEO, KPI, SaaS, API, Data...). KHÔNG gạch chân báo sai hay sửa nhầm thuật ngữ.
+2. SỬA LỖI CHÍNH TẢ & DẤU THANH: Sửa triệt để các lỗi đánh máy (vd: 1.726a -> 1.726, gầns -> gần, chính ta -> chính tả, đoạn vặn -> đoạn văn, sư lí -> xử lý, kiêm tra -> kiểm tra).
+3. BẢO TỒN THUẬT NGỮ: Giữ nguyên các thuật ngữ tiếng Anh, tên riêng, tên thương hiệu, mã số, từ viết tắt công nghệ/kinh doanh (vd: AI, Office, CEO, KPI, SaaS, API, Data...).
 4. NGUYÊN VẸN NỘI DUNG & ĐỊNH DẠNG: Giữ đúng ý nghĩa, cấu trúc câu, không tự ý thêm bớt nội dung ngoài việc sửa đúng chính tả và chuẩn hóa khoảng trắng/dấu câu.
 
-TRẢ VỀ KẾT QUẢ THEO ĐÚNG ĐỊNH DẠNG SAU:
+TRẢ VỀ KẾT QUẢ THEO ĐÚNG ĐỊNH DẠNG SAU (KHÔNG lặp lại hướng dẫn):
 🌐 [NGÔN NGỮ NHẬN DIỆN]: (Tiếng Việt / Tiếng Anh / Hỗn hợp)
 
 ✨ [BẢN ĐÃ SỬA CHÍNH TẢ & HOÀN THIỆN]:
-"{văn bản đã được sửa hoàn chỉnh}"
+(Viết trực tiếp đoạn văn bản đã được sửa hoàn chỉnh tại đây)
 
 🔍 [CHI TIẾT LỖI ĐÃ SỬA]:
-- Liệt kê ngắn gọn: "từ sai" ➔ "từ đúng" (nếu có lỗi) hoặc "Không phát hiện lỗi chính tả nào".
+- Liệt kê ngắn gọn từng lỗi đã sửa theo dạng từ sai ➔ từ đúng (nếu không có lỗi thì ghi Không phát hiện lỗi chính tả nào).
 
 Đoạn văn bản cần sửa:
+
 "${text}"`;
 
     sendCustomMessage(prompt, `✨ Kiểm tra & sửa lỗi chính tả đoạn chọn (${text.length} ký tự)`);
@@ -1220,61 +1236,117 @@ TRẢ VỀ KẾT QUẢ THEO ĐÚNG ĐỊNH DẠNG SAU:
     if (body) body.scrollTop = body.scrollHeight;
 
     let reply = '';
+    let lastErrorReason = '';
 
-    // Gửi request tới Bot 6 (Kaola Office Copilot)
+    // Gửi request tới Bot Kaola Office Copilot qua cấu hình tập trung (KaolaConfig)
     // Đưa message vào cả query params (đảm bảo CEF ONLYOFFICE luôn truyền được nội dung) lẫn POST body (hỗ trợ văn bản dài)
     try {
       const sessId = getSessionId();
-      const params = new URLSearchParams({
-        public_key: 'pk_admin_master_dae167d8d2cf75a5',
-        bot_id: '6',
-        session_id: sessId,
-        message: queryText.substring(0, 3000)
-      });
-      const url = 'https://ai.kaola.vn/api/v1/widget/message?' + params.toString();
+      const cfg = (typeof window !== 'undefined' && (window.KaolaConfig || (window.parent && window.parent.KaolaConfig))) || null;
+      const aiPublicKey = (cfg && cfg.aiPublicKey) || 'pk_admin_master_dae167d8d2cf75a5';
+      const aiBotId = (cfg && cfg.aiBotId) || 6;
+      const endpoints = (cfg && typeof cfg.getAiMessageUrls === 'function')
+        ? cfg.getAiMessageUrls()
+        : ['https://ai.kaola.vn/api/v1/widget/message'];
 
-      let res = null;
-      try {
-        res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            public_key: 'pk_admin_master_dae167d8d2cf75a5',
-            message: queryText,
-            bot_id: 6,
-            session_id: sessId
-          })
-        });
-      } catch (postErr) {
-        // Fallback sang GET nếu POST bị CEF chặn hoặc lỗi network
-        res = await fetch(url);
-      }
+      for (const baseUrl of endpoints) {
+        try {
+          const params = new URLSearchParams({
+            public_key: aiPublicKey,
+            bot_id: String(aiBotId),
+            session_id: sessId,
+            message: queryText.substring(0, 3000)
+          });
+          const url = baseUrl + '?' + params.toString();
 
-      if (res && res.ok) {
-        const data = await res.json();
-        let candidate = data.reply || '';
-        if (!candidate && data.message && typeof data.message === 'string') {
-          const lowerMsg = data.message.toLowerCase();
-          if (!lowerMsg.includes('not supported') &&
-              !lowerMsg.includes('exception') &&
-              !lowerMsg.includes('error') &&
-              !lowerMsg.includes('sqlstate') &&
-              !lowerMsg.includes('unauthenticated')) {
-            candidate = data.message;
+          let res = null;
+          try {
+            res = await fetch(url, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+              },
+              body: JSON.stringify({
+                public_key: aiPublicKey,
+                message: queryText,
+                bot_id: aiBotId,
+                session_id: sessId
+              }),
+              signal: AbortSignal.timeout ? AbortSignal.timeout(25000) : undefined
+            });
+          } catch (postErr) {
+            lastErrorReason = postErr && postErr.name === 'TimeoutError'
+              ? 'Quá thời gian chờ phản hồi từ máy chủ AI.'
+              : 'Không thể kết nối tới máy chủ Kaola AI.';
+            res = await fetch(url, { signal: AbortSignal.timeout ? AbortSignal.timeout(25000) : undefined });
           }
+
+          if (!res || !res.ok) {
+            lastErrorReason = res ? `Máy chủ AI phản hồi mã lỗi HTTP ${res.status}.` : 'Không nhận được phản hồi từ máy chủ AI.';
+            continue;
+          }
+
+          const ct = res.headers.get('content-type') || '';
+          if (!ct.includes('application/json')) {
+            lastErrorReason = 'Máy chủ Kaola AI chưa sẵn sàng (phản hồi không phải JSON hợp lệ).';
+            continue;
+          }
+
+          const data = await res.json();
+          let candidate = data.reply || '';
+          if (!candidate && data.message && typeof data.message === 'string') {
+            const lowerMsg = data.message.toLowerCase();
+            if (!lowerMsg.includes('not supported') &&
+                !lowerMsg.includes('exception') &&
+                !lowerMsg.includes('error') &&
+                !lowerMsg.includes('sqlstate') &&
+                !lowerMsg.includes('unauthenticated')) {
+              candidate = data.message;
+            }
+          }
+
+          // Phát hiện và loại bỏ phản hồi lệch ngữ cảnh (mock RAG trả về tài liệu CSKH/Thanh toán thay vì xử lý văn bản)
+          const isEditing = /chính tả|chính ta|hiệu đính|chuẩn hóa|tóm tắt|dịch/i.test(queryText);
+          const isRagMismatch = candidate.includes('Dựa trên tài liệu tra cứu từ hệ thống tri thức') || candidate.includes('Quý khách cần làm rõ thêm');
+          if (isEditing && isRagMismatch) {
+            candidate = '';
+            lastErrorReason = 'Máy chủ AI chưa sẵn sàng xử lý tác vụ soạn thảo.';
+          }
+
+          // Phát hiện phản hồi giả lập/echo từ server khi chưa cấu hình hoặc chưa chạy LLM thật
+          const isTranslateReq = /dịch chuẩn xác|dịch sang tiếng|translate/i.test(queryText);
+          const isSpellOrPolishReq = /chính tả|hiệu đính|chuẩn hóa/i.test(queryText);
+          if (candidate && (isTranslateReq || isSpellOrPolishReq)) {
+            const srcDoc = extractQuotedDocText(queryText);
+            const cleanedCand = cleanContentForInsertion(candidate);
+            const isExactEcho = srcDoc && srcDoc.length >= 20 && cleanedCand && cleanedCand.toLowerCase() === srcDoc.toLowerCase();
+            const isServerMockTemplate = candidate.includes('BẢN DỊCH SANG TIẾNG ANH CHUẨN XÁC')
+              || candidate.includes('BẢN ĐÃ CHUẨN HÓA VĂN PHONG & CHÍNH TẢ (Theo chuẩn Nghị định 30/2020/NĐ-CP)');
+            if (isExactEcho && (isTranslateReq || isServerMockTemplate)) {
+              candidate = '';
+              lastErrorReason = 'Máy chủ Kaola AI hiện đang ở chế độ dự phòng (chưa kết nối mô hình AI xử lý ngôn ngữ thật).';
+            }
+          }
+
+          if (candidate) {
+            reply = candidate;
+            break;
+          }
+        } catch (e) {
+          lastErrorReason = e && e.name === 'TimeoutError'
+            ? 'Quá thời gian chờ phản hồi từ máy chủ AI.'
+            : 'Không thể kết nối tới máy chủ Kaola AI.';
         }
-        reply = candidate;
       }
     } catch (err) {
-      console.warn('Lỗi kết nối Kaola AI Gateway, kích hoạt phản hồi thông minh dự phòng:', err);
+      console.warn('Lỗi kết nối Kaola AI Gateway:', err);
+      lastErrorReason = 'Không thể kết nối tới máy chủ Kaola AI.';
     }
 
-    // Nếu server trả về lỗi hoặc không có reply, kích hoạt bộ phân tích thông minh
+    // Tuyệt đối KHÔNG tự bịa nội dung, tự sửa bậy hoặc tự dịch giả khi không kết nối được máy chủ AI
     if (!reply || reply.toLowerCase().includes('not supported') || reply.toLowerCase().includes('exception')) {
-      reply = getSmartFallbackReply(queryText);
+      reply = getOfflineNotice(lastErrorReason);
     }
 
     if (typing) typing.classList.remove('active');
@@ -1349,7 +1421,7 @@ TRẢ VỀ KẾT QUẢ THEO ĐÚNG ĐỊNH DẠNG SAU:
     }
 
     msgDiv.innerHTML = `
-      <div class="kaola-chat-bubble">${escapeHtml(text).replace(/\n/g, '<br/>')}</div>
+      <div class="kaola-chat-bubble">${formatChatMarkdown(text)}</div>
       ${actionsHtml}
       <div class="kaola-chat-time">${timeStr}</div>
     `;
@@ -1410,18 +1482,30 @@ TRẢ VỀ KẾT QUẢ THEO ĐÚNG ĐỊNH DẠNG SAU:
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  function formatChatMarkdown(str) {
+    let html = escapeHtml(str || '');
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/(^|[^*])\*([^*\n]+?)\*/g, '$1<em>$2</em>');
+    html = html.replace(/`([^`\n]+?)`/g, '<code style="background:#f1f5f9;padding:1px 4px;border-radius:4px;font-size:12px;">$1</code>');
+    return html.replace(/\n/g, '<br/>');
+  }
+
   function extractQuotedDocText(prompt) {
     if (!prompt) return '';
-    const idx = prompt.indexOf(':\n\n"');
-    if (idx !== -1) {
-      let doc = prompt.substring(idx + 4);
-      if (doc.endsWith('"')) doc = doc.substring(0, doc.length - 1);
-      return doc.trim();
+    // Ưu tiên tìm khối cuối cùng sau ":\n\n\"" hoặc ":\n\"" để không bao giờ cắt nhầm chữ trong phần hướng dẫn prompt
+    const markers = [':\n\n"', ':\r\n\r\n"', ':\n\n“', ':\n"', ':\r\n"', ':\n“'];
+    let bestIdx = -1;
+    let bestLen = 0;
+    for (const m of markers) {
+      const idx = prompt.lastIndexOf(m);
+      if (idx > bestIdx) {
+        bestIdx = idx;
+        bestLen = m.length;
+      }
     }
-    const idx2 = prompt.indexOf(':\n\n“');
-    if (idx2 !== -1) {
-      let doc = prompt.substring(idx2 + 4);
-      if (doc.endsWith('”')) doc = doc.substring(0, doc.length - 1);
+    if (bestIdx !== -1) {
+      let doc = prompt.substring(bestIdx + bestLen);
+      if (doc.endsWith('"') || doc.endsWith('”')) doc = doc.substring(0, doc.length - 1);
       return doc.trim();
     }
     const firstQuote = prompt.indexOf('"');
@@ -1558,97 +1642,14 @@ TRẢ VỀ KẾT QUẢ THEO ĐÚNG ĐỊNH DẠNG SAU:
     };
   }
 
-  // Phản hồi thông minh ngoại tuyến khi không kết nối được server hoặc phân tích văn bản trực tiếp
-  function getSmartFallbackReply(text) {
-    const lower = text.toLowerCase();
-    const docText = extractQuotedDocText(text);
+  // Thông báo trung thực khi không kết nối được máy chủ AI (tuyệt đối không tự bịa / dịch giả / sửa bậy)
+  function getOfflineNotice(reason) {
+    const cfg = (typeof window !== 'undefined' && (window.KaolaConfig || (window.parent && window.parent.KaolaConfig))) || null;
+    const aiHost = (cfg && cfg.aiUrl) ? cfg.aiUrl.replace(/^https?:\/\//, '') : 'ai.kaola.vn';
+    const detail = reason ? `\n• **Chi tiết:** ${reason}` : '';
+    return `⚠️ **Không thể kết nối tới Trợ lý AI Kaola (${aiHost})**${detail}
 
-    if (lower.includes('tóm tắt') || lower.includes('điểm mấu chốt')) {
-      if (docText) {
-        const paragraphs = docText.split(/\n+/).map(p => p.trim()).filter(p => p.length > 10);
-        let points = [];
-        if (paragraphs.length >= 2) {
-          points = paragraphs.slice(0, 4).map((p, idx) => `* **Ý chính ${idx + 1}:** ${p}`);
-        } else {
-          const sentences = docText.split(/[.;]+/).map(s => s.trim()).filter(s => s.length > 8);
-          points = sentences.slice(0, 4).map((s, idx) => `* **Ý chính ${idx + 1}:** ${s.charAt(0).toUpperCase() + s.slice(1)}.`);
-        }
-
-        return `📊 **TÓM TẮT CÁC Ý CHÍNH CỦA ĐOẠN VĂN BẢN** (${docText.length} ký tự):
-
-${points.join('\n\n')}
-
-Anh/chị hãy nhấn nút **[📋 Chèn vào văn bản]** hoặc **[🔄 Thay thế đoạn chọn]** ngay bên dưới để đưa nội dung tóm tắt này vào tài liệu nhé!`;
-      }
-
-      return `📊 TÓM TẮT CÁC Ý CHÍNH CỦA ĐOẠN VĂN BẢN:
-1. Nội dung cốt lõi: Tập trung vào mục tiêu hoàn thành tiến độ và tối ưu hiệu suất công việc.
-2. Số liệu & Chỉ số chính: Đảm bảo kiểm soát chất lượng và tuân thủ quy chuẩn hành chính.
-3. Giải pháp trọng tâm: Phối hợp chặt chẽ giữa các phòng ban liên quan.
-4. Đề xuất hành động: Triển khai các bước tiếp theo theo đúng phê duyệt của lãnh đạo.
-
-💡 Bạn có thể nhấn nút "📋 Chèn vào văn bản" ngay bên dưới để dán bản tóm tắt này vào tài liệu nhé!`;
-    }
-
-    if (lower.includes('chuẩn hóa') || lower.includes('hiệu đính') || lower.includes('chính tả') || lower.includes('chính ta')) {
-      if (docText) {
-        const checkResult = smartSpellcheck(docText);
-        const details = (checkResult.changes && checkResult.changes.length > 0)
-          ? checkResult.changes.map(c => `- ${c}`).join('\n')
-          : '- Không phát hiện lỗi chính tả nghiêm trọng nào trong đoạn văn.';
-
-        return `🌐 [NGÔN NGỮ NHẬN DIỆN]: ${checkResult.lang}
-
-✨ [BẢN ĐÃ SỬA CHÍNH TẢ & HOÀN THIỆN]:
-"${checkResult.corrected}"
-
-🔍 [CHI TIẾT LỖI ĐÃ SỬA]:
-${details}
-
-💡 Bạn có thể nhấn nút "🔄 Thay thế đoạn chọn" bên dưới để tự động thay thế đoạn văn cũ trong tài liệu bằng bản đã sửa hoàn chỉnh này nhé!`;
-      }
-
-      return `🌐 [NGÔN NGỮ NHẬN DIỆN]: Tiếng Việt
-
-✨ [BẢN ĐÃ SỬA CHÍNH TẢ & HOÀN THIỆN]:
-"Kính gửi Quý đơn vị,
-Công ty chúng tôi xin trân trọng thông báo về tiến độ triển khai kế hoạch công việc. Kính đề nghị các phòng ban liên quan phối hợp rà soát và thực hiện đúng thời hạn quy định."
-
-🔍 [CHI TIẾT LỖI ĐÃ SỬA]:
-- Chuẩn hóa viết hoa và cấu trúc câu hành chính trang trọng.
-
-💡 Bạn có thể nhấn "🔄 Thay thế đoạn chọn" để tự động thay đoạn văn bản cũ bằng bản chuẩn hóa này.`;
-    }
-
-    if (lower.includes('dịch') || lower.includes('tiếng anh') || lower.includes('tiếng việt')) {
-      const isToVi = lower.includes('tiếng việt') || lower.includes('sang việt');
-      if (docText) {
-        return `${isToVi ? '🌐 [BẢN DỊCH SANG TIẾNG VIỆT CHUẨN XÁC]:' : '🌐 [BẢN DỊCH SANG TIẾNG ANH CHUẨN XÁC]:'}
-"${docText}"
-
-💡 Bạn có thể nhấn nút "📋 Chèn vào văn bản" hoặc "🔄 Thay thế đoạn chọn" bên dưới để đưa bản dịch vào tài liệu.`;
-      }
-
-      if (isToVi) {
-        return `🌐 [BẢN DỊCH SANG TIẾNG VIỆT CHUẨN VĂN PHÒNG]:
-"Chúng tôi xin trân trọng thông báo về tiến độ thực hiện kế hoạch công việc. Kính đề nghị các phòng ban liên quan phối hợp rà soát và đảm bảo triển khai đúng thời hạn quy định."
-
-💡 Bạn có thể nhấn nút "📋 Chèn vào văn bản" hoặc "🔄 Thay thế đoạn chọn" bên dưới để đưa bản dịch vào tài liệu.`;
-      }
-
-      return `🌐 [BẢN DỊCH SANG TIẾNG ANH THƯƠNG MẠI]:
-"We would like to formally announce the implementation of the project schedule. All relevant departments are kindly requested to coordinate and ensure timely execution in accordance with the established guidelines."
-
-💡 Bạn có thể nhấn nút "📋 Chèn vào văn bản" hoặc "🔄 Thay thế đoạn chọn" bên dưới để đưa bản dịch vào tài liệu.`;
-    }
-
-    if (lower.includes('pro') || lower.includes('giá') || lower.includes('nâng cấp') || lower.includes('bảng giá')) {
-      return 'Gói Kaola Pro mang đến khả năng xử lý AI không giới hạn, tắt 100% banner quảng cáo và cấp dung lượng Kaola Cloud. Anh/chị có thể nhấn vào nút "⭐ Gói Pro" ở góc trên khung chat để xem bảng giá ưu đãi ạ!';
-    }
-    if (lower.includes('excel') || lower.includes('hàm') || lower.includes('công thức')) {
-      return 'Để tính toán trong Kaola Office Excel, anh/chị có thể sử dụng các hàm phổ biến: =SUM(A1:A10) để tính tổng, =AVERAGE(B1:B10) tính trung bình, =VLOOKUP(...) tra cứu dữ liệu hoặc =XLOOKUP(...) đa năng. Anh/chị có thể dán cấu trúc bảng để em viết công thức cụ thể nhé!';
-    }
-    return `Em đã tiếp nhận yêu cầu: "${text}". Trợ lý Kaola AI luôn sẵn sàng đồng hành cùng anh/chị trong mọi tác vụ soạn thảo văn bản, tóm tắt tài liệu và xử lý bảng tính!`;
+Máy chủ AI hiện chưa hoạt động hoặc đang bảo trì. Vui lòng kiểm tra kết nối mạng và thử lại sau khi dịch vụ AI sẵn sàng.`;
   }
 
   // =========================================================================

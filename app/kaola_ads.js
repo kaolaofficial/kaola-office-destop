@@ -1,48 +1,38 @@
 /**
- * Kaola Office Enterprise - Central Initialization, Real-Time Ad Banner & Auto-Update Engine
- * Kết nối đồng bộ thời gian thực với KaolaWork SaaS
- * - Tự động cập nhật tức thì mẫu quảng cáo mới nhất ngay khi admin thay đổi trên SaaS
+ * Kaola Office - Central Initialization, Real-Time Ad Banner & Auto-Update Engine
+ * Kết nối đồng bộ thời gian thực với Kaola ID (id.kaola.vn — Ecosystem Ads Hub)
+ * - Tự động cập nhật tức thì mẫu quảng cáo mới nhất ngay khi admin thay đổi trên Kaola ID
  * - Dò tìm phiên bản mới và nhắc khách hàng nâng cấp
  * - Tự động ẩn quảng cáo khi kích hoạt bản quyền Kaola Pro
- * - Lắng nghe đa sự kiện: Polling 15s, Window Focus, Visibility Change, Route Change
+ * - Lắng nghe đa sự kiện: Polling, Window Focus, Visibility Change, Route Change
  */
 
 (function () {
   'use strict';
 
-  const APP_CURRENT_VERSION = '2.0.1';
-  const API_ENDPOINTS = [
-    'https://work.kaola.vn/api/v1/office/init',
-    'https://kaola.vn/api/v1/office/init',
-    'https://kaola.vn/wp-json/kaola-rm/v1/releases/kaola-office/latest',
-    'http://kaolawork.test/api/v1/office/init'
-  ];
-  const TRACK_ENDPOINTS = [
-    'https://work.kaola.vn/api/v1/ads/track',
-    'https://kaola.vn/api/v1/ads/track',
-    'http://kaolawork.test/api/v1/ads/track'
-  ];
+  const CFG = (typeof window !== 'undefined' && window.KaolaConfig) || null;
+  const APP_CURRENT_VERSION = (CFG && CFG.appVersion) || '2.0.1';
+  const API_ENDPOINTS = (CFG && typeof CFG.getInitUrls === 'function')
+    ? CFG.getInitUrls()
+    : [
+        'https://id.kaola.vn/api/v1/office/init',
+        'https://kaola.vn/wp-json/kaola-rm/v1/releases/kaola-office/latest'
+      ];
+  const TRACK_ENDPOINTS = (CFG && typeof CFG.getTrackUrls === 'function')
+    ? CFG.getTrackUrls()
+    : [
+        'https://id.kaola.vn/api/v1/ads/track'
+      ];
   const STORAGE_CONFIG_KEY = 'kaola_office_remote_config';
   const DISMISS_AD_SESSION_KEY = 'kaola_ad_dismissed';
   const DISMISS_AD_ID_KEY = 'kaola_ad_dismissed_id';
   const DISMISS_UPDATE_SESSION_KEY = 'kaola_update_dismissed';
   const DEVICE_ID_STORAGE_KEY = 'kaola_office_device_id';
   const ACTIVE_ENDPOINT_KEY = 'kaola_office_active_endpoint';
-  const SYNC_INTERVAL_MS = 15 * 60 * 1000; // Định kỳ kiểm tra cập nhật mỗi 15 phút (thay vì 15 giây)
+  const SYNC_INTERVAL_MS = 15 * 60 * 1000; // Định kỳ kiểm tra cập nhật mỗi 15 phút
 
-  // Dữ liệu Quảng cáo mặc định khi offline hoặc chưa kết nối máy chủ
-  const DEFAULT_AD = {
-    id: 'ad_bank_enterprise_01',
-    badge: 'ƯU ĐÃI DOANH NGHIỆP',
-    icon: '🏦',
-    iconImg: '',
-    title: 'Tài khoản Doanh nghiệp Số đẹp — Miễn 100% phí chuyển tiền',
-    desc: 'Mở tài khoản thanh toán online trong 5 phút. Tặng gói tín dụng ưu đãi độc quyền cho khách hàng Kaola Office.',
-    ctaText: 'Xem ưu đãi',
-    ctaUrl: 'https://kaola.vn/partners/promo',
-    active: true,
-    customHtml: ''
-  };
+  // Không fix cứng quảng cáo mẫu khi offline hoặc server chưa bật chiến dịch
+  const DEFAULT_AD = null;
 
   let remoteConfig = null;
   let bannerElement = null;
@@ -130,10 +120,15 @@
     const queryParams = buildTelemetryQuery() + '&_t=' + Date.now();
     const headers = { 'Cache-Control': 'no-cache, no-store', 'Pragma': 'no-cache' };
 
-    // Ưu tiên endpoint đã từng kết nối thành công trước đó
+    // Ưu tiên endpoint đã từng kết nối thành công trước đó (loại bỏ cache cũ không thuộc Kaola ID)
     try {
       if (!activeApiUrl) {
-        activeApiUrl = localStorage.getItem(ACTIVE_ENDPOINT_KEY);
+        const cachedEp = localStorage.getItem(ACTIVE_ENDPOINT_KEY);
+        if (cachedEp && API_ENDPOINTS.includes(cachedEp)) {
+          activeApiUrl = cachedEp;
+        } else if (cachedEp) {
+          localStorage.removeItem(ACTIVE_ENDPOINT_KEY);
+        }
       }
     } catch (e) {}
 
@@ -430,12 +425,15 @@
       }
     } catch (e) {}
 
-    // Xác định endpoint ưu tiên
-    let primaryEndpoint = 'https://work.kaola.vn/api/v1/ads/track';
-    if (activeApiUrl) {
+    // Xác định endpoint ưu tiên (ưu tiên Kaola ID)
+    let primaryEndpoint = (TRACK_ENDPOINTS && TRACK_ENDPOINTS[0])
+      || (((CFG && CFG.idUrl) || 'https://id.kaola.vn') + '/api/v1/ads/track');
+    if (activeApiUrl && API_ENDPOINTS.includes(activeApiUrl)) {
       try {
         const urlObj = new URL(activeApiUrl);
-        primaryEndpoint = `${urlObj.origin}/api/v1/ads/track`;
+        if (urlObj.pathname.includes('/api/v1/office/init')) {
+          primaryEndpoint = `${urlObj.origin}/api/v1/ads/track`;
+        }
       } catch (e) {}
     }
 
@@ -710,12 +708,8 @@
       }
     } catch (e) {}
 
-    // 2. Đồng bộ với máy chủ (ngay 100ms trên môi trường test/local, hoặc 1.5s trên production)
-    const isLocalDev = typeof window !== 'undefined' && (
-      window.location.hostname.includes('.test') || 
-      window.location.hostname === 'localhost' || 
-      window.location.protocol === 'file:'
-    );
+    // 2. Đồng bộ với máy chủ (nhanh hơn trên môi trường local dev)
+    const isLocalDev = !!(CFG && CFG.env === 'local');
     setTimeout(() => {
       checkAndSyncAds();
     }, isLocalDev ? 100 : 1500);

@@ -9,9 +9,11 @@ class KaolaAIEngine {
   }
 
   loadSettings() {
-    this.provider = localStorage.getItem('kaola_ai_provider') || 'simulation';
+    const cfg = (typeof window !== 'undefined' && (window.KaolaConfig || (window.parent && window.parent.KaolaConfig))) || null;
+    const defaultWorkUrl = ((cfg && cfg.workUrl) || 'https://work.kaola.vn') + '/api/v1/office/ai/chat';
+    this.provider = localStorage.getItem('kaola_ai_provider') || 'kaolaai';
     this.apiKey = localStorage.getItem('kaola_ai_key') || '';
-    this.apiUrl = localStorage.getItem('kaola_ai_url') || 'https://work.kaola.vn/api/v1/office/ai/chat';
+    this.apiUrl = localStorage.getItem('kaola_ai_url') || defaultWorkUrl;
     this.model = localStorage.getItem('kaola_ai_model') || 'gpt-4o-mini';
   }
 
@@ -27,22 +29,27 @@ class KaolaAIEngine {
     localStorage.setItem('kaola_ai_model', model);
   }
 
+  notifyOfflineError(err, onChunk) {
+    const cfg = (typeof window !== 'undefined' && (window.KaolaConfig || (window.parent && window.parent.KaolaConfig))) || null;
+    const aiHost = (cfg && cfg.aiUrl) ? cfg.aiUrl.replace(/^https?:\/\//, '') : 'ai.kaola.vn';
+    const detail = (err && err.message) ? `\nChi tiết: ${err.message}` : '';
+    const msg = `⚠️ Không thể kết nối tới máy chủ Trợ lý AI Kaola (${aiHost}).${detail}\n\nDịch vụ AI hiện chưa hoạt động hoặc đang bảo trì. Vui lòng kiểm tra kết nối mạng và thử lại sau.`;
+    if (onChunk) onChunk(msg);
+    return msg;
+  }
+
   async generate(promptText, onChunk = null) {
-    if (this.provider === 'kaolaai') {
+    if (this.provider === 'kaolaai' || (!this.apiKey && this.provider !== 'ollama' && this.provider !== 'simulation')) {
       try {
         return await this.callKaolaAI(promptText, onChunk);
       } catch (e) {
-        console.warn("Lỗi gọi Kaola AI, dùng fallback:", e);
-        return this.simulateResponse(promptText, onChunk);
+        console.warn("Lỗi kết nối Kaola AI:", e);
+        return this.notifyOfflineError(e, onChunk);
       }
     }
 
-    if (this.provider === 'simulation' || (!this.apiKey && this.provider !== 'ollama')) {
-      try {
-        return await this.callKaolaAI(promptText, onChunk);
-      } catch (e) {
-        return this.simulateResponse(promptText, onChunk);
-      }
+    if (this.provider === 'simulation') {
+      return this.notifyOfflineError(new Error('Chế độ mô phỏng đã tắt để tránh tạo nội dung sai lệch. Vui lòng chọn Kaola AI hoặc cấu hình API Key hợp lệ.'), onChunk);
     }
 
     try {
@@ -58,9 +65,8 @@ class KaolaAIEngine {
         return await this.callKaolaworkGateway(promptText, onChunk);
       }
     } catch (err) {
-      console.warn("Lỗi gọi AI Provider, chuyển sang chế độ dự phòng:", err);
-      if (onChunk) onChunk(`\n[Lưu ý: Kết nối máy chủ AI gặp lỗi (${err.message}). Đang kích hoạt phản hồi mô phỏng tiêu chuẩn]\n\n`);
-      return this.simulateResponse(promptText, onChunk);
+      console.warn("Lỗi kết nối AI Provider:", err);
+      return this.notifyOfflineError(err, onChunk);
     }
   }
 
@@ -72,13 +78,22 @@ class KaolaAIEngine {
         localStorage.setItem('kaola_copilot_session_id', sessId);
       } catch (e) {}
     }
+    
+    // Sử dụng cấu hình tập trung từ KaolaConfig (tự nhận diện Production / Local Dev)
+    const cfg = (typeof window !== 'undefined' && (window.KaolaConfig || (window.parent && window.parent.KaolaConfig))) || null;
+    const aiPublicKey = (cfg && cfg.aiPublicKey) || 'pk_admin_master_dae167d8d2cf75a5';
+    const aiBotId = (cfg && cfg.aiBotId) || 6;
+    const defaultWidgetUrl = ((cfg && cfg.aiUrl) || 'https://ai.kaola.vn') + '/api/v1/widget/message';
+    const customBridge = localStorage.getItem('kaola_ai_bridge_url');
+    const baseUrl = customBridge || defaultWidgetUrl;
+    
     const params = new URLSearchParams({
-      public_key: 'pk_admin_master_dae167d8d2cf75a5',
-      bot_id: '6',
+      public_key: aiPublicKey,
+      bot_id: String(aiBotId),
       session_id: sessId,
       message: promptText.substring(0, 1000)
     });
-    const url = 'https://ai.kaola.vn/api/v1/widget/message?' + params.toString();
+    const url = baseUrl + (baseUrl.includes('?') ? '&' : '?') + params.toString();
 
     const res = await fetch(url, {
       method: 'POST',
@@ -87,13 +102,16 @@ class KaolaAIEngine {
         'Accept': 'application/json'
       },
       body: JSON.stringify({
-        public_key: 'pk_admin_master_dae167d8d2cf75a5',
+        public_key: aiPublicKey,
         message: promptText,
-        bot_id: 6,
+        bot_id: aiBotId,
         session_id: sessId
-      })
+      }),
+      signal: AbortSignal.timeout ? AbortSignal.timeout(25000) : undefined
     });
-    if (!res.ok) throw new Error(`Kaola AI Status: ${res.status}`);
+    if (!res.ok) throw new Error(`Máy chủ AI phản hồi mã lỗi HTTP ${res.status}`);
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) throw new Error('Máy chủ Kaola AI chưa sẵn sàng');
     const data = await res.json();
     let text = data.reply || '';
     if (!text && data.message && typeof data.message === 'string') {
@@ -103,6 +121,9 @@ class KaolaAIEngine {
       }
     }
     if (!text) throw new Error('Phản hồi trống hoặc không hợp lệ');
+    if (text.includes('BẢN DỊCH SANG TIẾNG ANH CHUẨN XÁC') || text.includes('BẢN ĐÃ CHUẨN HÓA VĂN PHONG & CHÍNH TẢ (Theo chuẩn Nghị định 30/2020/NĐ-CP)')) {
+      throw new Error('Máy chủ AI đang ở chế độ dự phòng (chưa kết nối mô hình LLM thật)');
+    }
     if (onChunk) onChunk(text);
     return text;
   }

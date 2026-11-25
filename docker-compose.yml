@@ -1,0 +1,8 @@
+services:
+  build-env:
+    build: .
+    volumes:
+      - .:/app
+    # Thiết lập biến môi trường nếu cần
+    environment:
+      - NODE_ENV=production

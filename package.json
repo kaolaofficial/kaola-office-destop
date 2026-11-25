@@ -1,0 +1,15 @@
+{
+  "name": "kaola-office-root",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Unified task manager for Kaola Office build process",
+  "scripts": {
+    "patch": "python tools/patch_branding.py",
+    "test": "python tools/test_kaola_office.py",
+    "build:frontend": "cd web && npm install && npm run build",
+    "build:installer": "powershell -ExecutionPolicy Bypass -File package/build_installer.ps1",
+    "build": "npm run build:frontend && npm run patch && npm run build:installer",
+    "start:desktop": "start KaolaOffice.bat",
+    "start:web": "start KaolaOffice_Web.bat"
+  }
+}

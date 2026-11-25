@@ -1,4 +1,4 @@
-# Script tự động hóa đóng gói bộ cài đặt Windows Kaola Office
+﻿# Script tự động hóa đóng gói bộ cài đặt Windows Kaola Office
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $baseDir = Split-Path -Parent $scriptDir
 $issPath = Join-Path $scriptDir "kaola_setup.iss"
@@ -39,6 +39,15 @@ if (-not $isccPath) {
 
 Write-Host "[INFO] Tìm thấy Inno Setup tại: $isccPath" -ForegroundColor Green
 Write-Host "[INFO] Đang đóng gói: $issPath..." -ForegroundColor Green
+
+# Chạy bộ kiểm thử tự động trước khi đóng gói
+Write-Host "[INFO] Đang chạy bộ kiểm thử tự động..." -ForegroundColor Cyan
+python "$baseDir\tools\test_kaola_office.py"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[ERROR] Kiểm thử thất bại! Dừng đóng gói." -ForegroundColor Red
+    exit 1
+}
+Write-Host "[SUCCESS] Kiểm thử đạt 100%. Tiếp tục đóng gói." -ForegroundColor Green
 
 & "$isccPath" "$issPath"
 

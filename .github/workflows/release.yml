@@ -71,6 +71,7 @@ jobs:
 
       - name: Build macOS DMGs
         run: |
+          sed -i '' 's/\r$//' package/mac/build_mac.sh package/mac/fix_gatekeeper.command
           chmod +x package/mac/build_mac.sh
           chmod +x package/mac/fix_gatekeeper.command
           ./package/mac/build_mac.sh "all"
@@ -130,11 +131,22 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Deploy Installer Files to download.kaola.vn (Optional FTP)
+        if: env.FTP_SERVER != ''
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: release_assets/
+          server-dir: ${{ secrets.FTP_TARGET_DIR || '/' }}
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+
       - name: Trigger Webhook to Kaola Website (WordPress)
         env:
           KAOLA_RELEASE_SECRET: ${{ secrets.KAOLA_RELEASE_SECRET }}
           KAOLA_WEBHOOK_URL: ${{ secrets.KAOLA_WEBHOOK_URL }}
-          REPO_NAME: ${{ github.repository }}
           TAG_NAME: ${{ steps.vars.outputs.tag }}
           VERSION: ${{ steps.vars.outputs.version }}
         run: |
@@ -163,21 +175,21 @@ jobs:
                 "file_label": "Windows (64-bit)",
                 "file_name": "KaolaOffice_Setup.exe",
                 "file_source": "external",
-                "file_url": "https://github.com/${REPO_NAME}/releases/download/${TAG_NAME}/KaolaOffice_Setup.exe"
+                "file_url": "https://download.kaola.vn/KaolaOffice_Setup.exe"
               },
               {
                 "platform": "mac_arm64",
                 "file_label": "macOS (Apple Silicon M1/M2/M3/M4)",
                 "file_name": "KaolaOffice_macOS_arm64.dmg",
                 "file_source": "external",
-                "file_url": "https://github.com/${REPO_NAME}/releases/download/${TAG_NAME}/KaolaOffice_macOS_arm64.dmg"
+                "file_url": "https://download.kaola.vn/KaolaOffice_macOS_arm64.dmg"
               },
               {
                 "platform": "mac_intel",
                 "file_label": "macOS (Intel x86_64)",
                 "file_name": "KaolaOffice_macOS_x86_64.dmg",
                 "file_source": "external",
-                "file_url": "https://github.com/${REPO_NAME}/releases/download/${TAG_NAME}/KaolaOffice_macOS_x86_64.dmg"
+                "file_url": "https://download.kaola.vn/KaolaOffice_macOS_x86_64.dmg"
               }
             ]
           }

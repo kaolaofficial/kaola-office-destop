@@ -1,7 +1,7 @@
 ; Script generated for Inno Setup - Kaola Office
 #define MyAppName "Kaola Office"
 #define MyAppVersion "2.0.1"
-#define MyAppPublisher "Kaola"
+#define MyAppPublisher "Công ty Cổ phần Đầu tư Kaola"
 #define MyAppURL "https://id.kaola.vn"
 #define MyAppExeName "KaolaOffice.exe"
 #define MyAppAssocName "Tài liệu " + MyAppName
@@ -36,8 +36,14 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
+[InstallDelete]
+; Dọn dẹp Plugin Manager & AI Tools gốc của ONLYOFFICE và file cấu hình dev nếu cài đè lên bản cũ
+Type: filesandordirs; Name: "{app}\editors\sdkjs-plugins\{{AA2EA9B6-9EC2-415F-9762-634EE8D9A95E}"
+Type: filesandordirs; Name: "{app}\editors\sdkjs-plugins\{{9DC93CDB-B576-4F0C-B55E-FCC9C48DD007}"
+Type: files; Name: "{app}\kaola.env.local.js"
+
 [Files]
-Source: "..\app\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.bak,*.tmp,updatesvc.exe"
+Source: "..\app\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "*.bak,*.tmp,updatesvc.exe,kaola.env.local.js"
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]

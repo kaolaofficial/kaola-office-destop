@@ -11,15 +11,34 @@ export function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | OfficeDocType>('dashboard');
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
 
-  // User state linked to id.kaola.vn
-  const [user, setUser] = useState<KaolaUser>({
-    id: 'usr_kaola_001',
-    name: 'Trung Nguyễn',
-    email: 'trung.nguyen@kaola.vn',
-    plan: 'free',
-    aiCreditsRemaining: 15,
-    aiCreditsTotal: 20,
-    connectedToKaolaId: true
+  // User state linked to id.kaola.vn (read from localStorage session if logged in)
+  const [user, setUser] = useState<KaolaUser>(() => {
+    try {
+      const saved = localStorage.getItem('kaola_account_user');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && (parsed.email || parsed.name)) {
+          return {
+            id: parsed.id || 'usr_kaola_session',
+            name: parsed.name || (parsed.email ? parsed.email.split('@')[0] : 'Người dùng Kaola'),
+            email: parsed.email || '',
+            plan: parsed.is_vip ? 'pro' : 'free',
+            aiCreditsRemaining: parsed.is_vip ? 999 : 20,
+            aiCreditsTotal: parsed.is_vip ? 999 : 20,
+            connectedToKaolaId: true
+          };
+        }
+      }
+    } catch {}
+    return {
+      id: 'guest',
+      name: 'Khách trải nghiệm',
+      email: '',
+      plan: 'free',
+      aiCreditsRemaining: 20,
+      aiCreditsTotal: 20,
+      connectedToKaolaId: false
+    };
   });
 
   // Local & Cloud Documents

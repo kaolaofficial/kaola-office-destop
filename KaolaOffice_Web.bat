@@ -7,7 +7,7 @@ echo       (ONLYOFFICE Community Edition + Kaola AI Copilot)
 echo ========================================================
 echo.
 echo Dang mo Kaola Office Web tren trinh duyet...
-start http://kaolaoffice.test
+start https://office.kaola.vn
 echo.
 echo Nhan phim bat ky de thoat...
 pause >nul

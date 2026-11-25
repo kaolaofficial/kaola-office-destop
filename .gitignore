@@ -24,3 +24,7 @@ __pycache__/
 *$py.class
 tools/__pycache__/
 scratch/
+
+# Local Dev Environment Override (never commit or ship)
+**/kaola.env.local.js
+*.bak

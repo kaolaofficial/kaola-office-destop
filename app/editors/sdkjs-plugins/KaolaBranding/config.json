@@ -1,0 +1,16 @@
+{
+  "name": "KAOLA OFFICE Branding",
+  "guid": "asc.{KaolaBranding-2026-11-19}",
+  "version": "1.0.0",
+  "minVersion": "8.0.0",
+  "variations": [
+    {
+      "url": "index.html",
+      "EditorsSupport": ["word", "cell", "slide", "pdf"],
+      "type": "panelRight",
+      "isVisual": false,
+      "initOnSelectionChanged": false
+    }
+  ],
+  "index_about": "index_about.html"
+}

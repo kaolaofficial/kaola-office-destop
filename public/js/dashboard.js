@@ -7,9 +7,11 @@
 (function () {
   'use strict';
 
-  const DEFAULT_DOC_SERVER = typeof window !== 'undefined' && window.location.protocol === 'https:'
-    ? 'https://docs.kaola.vn'
-    : 'http://localhost:8080';
+  const DEFAULT_DOC_SERVER = (typeof window !== 'undefined' && window.KaolaConfig && window.KaolaConfig.docsUrl)
+    ? window.KaolaConfig.docsUrl
+    : (typeof window !== 'undefined' && window.location.protocol === 'https:'
+      ? 'https://docs.kaola.vn'
+      : 'http://localhost:8080');
   let allDocuments = [];
 
   // Danh mục 15+ Mẫu văn bản chuẩn Nghị định 30 & Nghiệp vụ Việt Nam

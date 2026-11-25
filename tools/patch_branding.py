@@ -4,7 +4,12 @@ import io
 import struct
 import zlib
 import base64
+import hashlib
+import shutil
 from PIL import Image, ImageDraw, ImageFont
+
+# Hash SHA256 của file editors.exe gốc chưa qua patch
+EXPECTED_ORIGINAL_HASH = "8b5f0f8f2edd20a14be0a1a3e548510c796af3ef246de3a56cc2650be98139f6"
 
 sys.stdout.reconfigure(encoding='utf-8')
 
@@ -129,8 +134,39 @@ def make_svg_logo(target_len, is_dark=False):
     return full_svg
 
 
+def _sha256_file(file_path):
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
+def verify_binary(file_path, expected_hash):
+    """Kiểm tra tính toàn vẹn của file binary trước khi patch."""
+    print(f"[*] Đang kiểm tra tính toàn vẹn của: {os.path.basename(file_path)}")
+    actual_hash = _sha256_file(file_path)
+    if actual_hash != expected_hash:
+        backup_path = file_path + ".bak"
+        if os.path.exists(backup_path) and _sha256_file(backup_path) == expected_hash:
+            print(f"[*] Hash hiện tại khác bản gốc, đang khôi phục từ backup hợp lệ: {backup_path}")
+            shutil.copy2(backup_path, file_path)
+            print("[OK] Đã khôi phục bản gốc hợp lệ. Tiếp tục quy trình patch.")
+            return
+        print(f"[ERROR] Hash file không khớp! (Expected: {expected_hash}, Got: {actual_hash})")
+        print("[!] Có thể phiên bản editors.exe đã thay đổi hoặc đã bị patch trước đó. Dừng quy trình để đảm bảo an toàn.")
+        sys.exit(1)
+    print("[OK] Hash khớp. Tiếp tục quy trình patch.")
+
 def patch_editors_exe():
     print("--- 1. VÁ TÀI NGUYÊN LOGO TRONG EDITORS.EXE ---")
+    verify_binary(EDITORS_EXE, EXPECTED_ORIGINAL_HASH)
+    
+    # Tạo backup trước khi patch
+    backup_path = EDITORS_EXE + ".bak"
+    if not os.path.exists(backup_path):
+        print(f"[*] Đang tạo bản sao lưu tại: {backup_path}")
+        shutil.copy2(EDITORS_EXE, backup_path)
+    
     with open(EDITORS_EXE, 'rb') as f:
         data = bytearray(f.read())
     
@@ -174,17 +210,6 @@ def patch_editors_exe():
         print(f"[SKIP] Chuỗi tại 0xc2ce8 đã là 'Kaola Office'")
     else:
         print(f"[WARN] Chuỗi tại 0xc2ce8: {data[0xc2ce8 : 0xc2ce8 + 16]}")
-    
-    # Vá link đăng ký OnlyOffice -> Kaola Drive (drive.kaola.vn) tại 0xc3258
-    reg_url_offset = 0xc3258
-    orig_reg_url = b"https://onlyoffice.com/registration.aspx?desktop=true"
-    new_reg_url = b"https://drive.kaola.vn"
-    if data[reg_url_offset : reg_url_offset + len(orig_reg_url)] == orig_reg_url:
-        padded = new_reg_url + b"\x00" * (len(orig_reg_url) - len(new_reg_url))
-        data[reg_url_offset : reg_url_offset + len(orig_reg_url)] = padded
-        print(f"[OK] Đã vá registration link tại {hex(reg_url_offset)} -> '{new_reg_url.decode()}'")
-    elif data[reg_url_offset : reg_url_offset + len(new_reg_url)] == new_reg_url:
-        print(f"[SKIP] Registration link tại {hex(reg_url_offset)} đã là '{new_reg_url.decode()}'")
     
     with open(EDITORS_EXE, 'wb') as f:
         f.write(data)

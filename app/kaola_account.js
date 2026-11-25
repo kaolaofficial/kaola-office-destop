@@ -1,7 +1,7 @@
 /**
  * Kaola Office - Account, ID Connect & KaolaPay Client
- * Tích hợp hệ thống quản lý tài khoản tập trung id.kaola.vn
- * & Cổng thanh toán KaolaPay (pay.kaola.vn / kaolapay.test)
+ * Tích hợp hệ thống quản lý tài khoản tập trung Kaola ID
+ * & Cổng thanh toán KaolaPay (Server-authoritative pricing)
  * 
  * Giấy phép: Dựa trên ONLYOFFICE Desktop Editors (GNU AGPL v3)
  * Hoàn toàn miễn phí trọn đời, không khóa phần mềm, không ép thanh toán.
@@ -10,11 +10,25 @@
 (function () {
   'use strict';
 
-  const KAOLA_ID_PORTAL_URL = 'https://id.kaola.vn';
-  const KAOLA_SERVER_URL = 'https://work.kaola.vn'; // Máy chủ Super Admin & API
-  const KAOLAPAY_BASE_URL = 'https://pay.kaola.vn'; // Cổng thanh toán KaolaPay
-  const APP_CODE = 'kaolaoffice';
-  const SECRET_KEY = 'kaola_sk_office_8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b';
+  const CFG = (typeof window !== 'undefined' && window.KaolaConfig) || {
+    env: 'production',
+    appCode: 'kaolaoffice',
+    companyName: 'Công ty Cổ phần Đầu tư Kaola',
+    idUrl: 'https://id.kaola.vn',
+    payUrl: 'https://id.kaola.vn',
+    legacyPayUrl: 'https://pay.kaola.vn',
+    driveUrl: 'https://drive.kaola.vn',
+    packagesPath: '/api/v1/ecosystem/packages?service=office',
+    checkoutPackageSessionPath: '/api/v1/checkout/package-sessions',
+    subscriptionStatusPath: '/api/v1/customer/subscription',
+    getIdApiUrls: (p) => ['https://id.kaola.vn' + p],
+    getPayApiUrls: (p) => ['https://id.kaola.vn' + p, 'https://pay.kaola.vn' + p]
+  };
+
+  const KAOLA_ID_PORTAL_URL = CFG.idUrl;
+  const KAOLA_ID_PACKAGES_PATH = CFG.packagesPath || '/api/v1/ecosystem/packages?service=office';
+  const KAOLAPAY_BASE_URL = CFG.payUrl || CFG.idUrl;
+  const APP_CODE = CFG.appCode || 'kaolaoffice';
   const STORAGE_KEY = 'kaola_account_user';
 
   let globalOpenModal = null;
@@ -37,72 +51,14 @@
       }
     }
   }
-  let PLANS = {
-    'office_pro_1m': {
-      code: 'office_pro_1m',
-      name: 'Gói Kaola Office Pro (1 Tháng)',
-      duration_months: 1,
-      amount: 49000,
-      priceFormatted: '49.000 đ',
-      periodText: '/tháng',
-      badge: '',
-      features: [
-        'Tắt 100% banner quảng cáo',
-        '1.000 lượt yêu cầu Kaola AI Copilot',
-        '15GB dung lượng đám mây lưu trữ',
-        'Hỗ trợ xuất hóa đơn điện tử VAT'
-      ]
-    },
-    'office_pro_1y': {
-      code: 'office_pro_1y',
-      name: 'Gói Kaola Office Pro (1 Năm - Tặng 2 tháng)',
-      duration_months: 12,
-      amount: 499000,
-      priceFormatted: '499.000 đ',
-      periodText: '/năm',
-      badge: 'Tiết kiệm 17%',
-      isPopular: true,
-      features: [
-        'Tắt 100% banner quảng cáo trọn 1 năm',
-        'Không giới hạn câu hỏi Kaola AI Copilot',
-        '50GB dung lượng đám mây lưu trữ',
-        'Tặng thêm 2 tháng VIP Pro',
-        'Hỗ trợ xuất hóa đơn điện tử VAT'
-      ]
-    },
-    'office_business_1y': {
-      code: 'office_business_1y',
-      name: 'Gói Doanh Nghiệp (1 Năm)',
-      duration_months: 12,
-      amount: 1200000,
-      priceFormatted: '1.200.000 đ',
-      periodText: '/năm',
-      badge: 'Doanh Nghiệp',
-      features: [
-        'Độc lập 100%, không cần KaolaWork',
-        'Tắt 100% quảng cáo cho toàn bộ dàn máy',
-        'AI Copilot mở khóa cho toàn bộ nhân sự',
-        'License Key kích hoạt theo lô hoặc Domain',
-        'Hợp đồng & Xuất hóa đơn đỏ VAT công ty'
-      ]
-    },
-    'office_internal': {
-      code: 'office_internal',
-      name: 'Gói Kaola Office Nội Bộ',
-      duration_months: 999,
-      amount: 0,
-      priceFormatted: '0 đ',
-      periodText: '/Vĩnh viễn',
-      badge: 'Nội bộ',
-      isInternal: true,
-      features: [
-        'Dành riêng cho nhân sự & đối tác Kaola',
-        'Tắt 100% banner quảng cáo',
-        'Không giới hạn Kaola Office Copilot (Bot 6)',
-        'Đồng bộ tài liệu không giới hạn Kaola Drive'
-      ]
-    }
-  };
+
+  // Danh mục gói cước được tải 100% động từ nguồn duy nhất Kaola ID
+  // (GET /api/v1/ecosystem/packages?service=office — Ecosystem Service ID #8)
+  // Không fix cứng bất kỳ gói nào trong mã nguồn client.
+  let PLANS = {};
+  let packagesState = 'idle'; // 'idle' | 'loading' | 'loaded' | 'error'
+  let packagesError = '';
+  let packagesFetchPromise = null;
 
   const PAYMENT_CHANNELS = {
     vietqr: {
@@ -135,7 +91,7 @@
   };
 
   let currentUser = null;
-  let selectedPlanCode = 'office_pro_1y';
+  let selectedPlanCode = '';
   let selectedPaymentChannel = 'vietqr';
   let activePollingInterval = null;
   let currentOrderCode = null;
@@ -192,22 +148,26 @@
     } catch (e) {}
   }
 
-  // Đồng bộ trạng thái gói cước từ cổng KaolaPay
+  // Đồng bộ trạng thái gói cước từ cổng Kaola ID / KaolaPay
   async function syncCustomerSubscription(email) {
     if (!email) return null;
-    try {
-      const res = await fetch(`${KAOLAPAY_BASE_URL}/api/v1/customer/subscription?email=${encodeURIComponent(email)}`, {
-        headers: { 'Accept': 'application/json' },
-        signal: AbortSignal.timeout ? AbortSignal.timeout(1500) : undefined
-      });
-      if (res.ok) {
+    const urls = CFG.getPayApiUrls(`${CFG.subscriptionStatusPath || '/api/v1/customer/subscription'}?email=${encodeURIComponent(email)}`);
+    for (const url of urls) {
+      try {
+        const res = await fetch(url, {
+          headers: { 'Accept': 'application/json' },
+          signal: AbortSignal.timeout ? AbortSignal.timeout(2500) : undefined
+        });
+        if (!res.ok) continue;
+        const ct = res.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) continue;
         const data = await res.json();
         if (data.has_active_subscription) {
           currentUser = currentUser || {};
           currentUser.email = data.email || currentUser.email || email;
           currentUser.is_vip = true;
           currentUser.plan_name = data.plan_name || 'Gói Kaola Office Pro';
-          currentUser.plan_code = data.plan_code || 'office_pro_1y';
+          currentUser.plan_code = data.plan_code || '';
           currentUser.order_code = data.order_code || '';
           currentUser.duration_months = data.duration_months || 12;
           currentUser.paid_at = data.paid_at || '';
@@ -222,9 +182,10 @@
           } catch (e) {}
           return data;
         }
+        return data;
+      } catch (e) {
+        console.warn('Lỗi kiểm tra gói đăng ký từ KaolaPay:', e);
       }
-    } catch (e) {
-      console.warn('Lỗi kiểm tra gói đăng ký từ KaolaPay:', e);
     }
     return null;
   }
@@ -255,7 +216,12 @@
       try {
         const savedPending = JSON.parse(localStorage.getItem('kaola_pending_order') || 'null');
         if (savedPending && savedPending.orderCode && (Date.now() - (savedPending.time || 0) < 86400000)) {
-          const plan = PLANS[savedPending.planCode] || PLANS['office_pro_1y'] || Object.values(PLANS)[0];
+          const plan = PLANS[savedPending.planCode] || Object.values(PLANS)[0] || {
+            code: savedPending.planCode || '',
+            name: savedPending.planName || 'Gói Kaola Office',
+            duration_months: 12,
+            amount: 0
+          };
           checkOrderStatus(savedPending.orderCode, savedPending.customerEmail, plan, false);
         }
       } catch (e) {}
@@ -563,29 +529,6 @@
     );
   }
 
-  // Tạo chữ ký HMAC SHA-256 bằng Web Crypto API (kèm cơ chế phòng vệ an toàn)
-  async function generateHmacSha256(secret, message) {
-    try {
-      if (typeof crypto !== 'undefined' && crypto.subtle && typeof crypto.subtle.importKey === 'function') {
-        const enc = new TextEncoder();
-        const key = await crypto.subtle.importKey(
-          'raw',
-          enc.encode(secret),
-          { name: 'HMAC', hash: 'SHA-256' },
-          false,
-          ['sign']
-        );
-        const signature = await crypto.subtle.sign('HMAC', key, enc.encode(message));
-        return Array.from(new Uint8Array(signature))
-          .map(b => b.toString(16).padStart(2, '0'))
-          .join('');
-      }
-    } catch (e) {
-      console.warn('Lỗi WebCrypto HMAC, sử dụng fallback dự phòng:', e);
-    }
-    return 'fallback_sig_' + Math.floor(Date.now() / 1000);
-  }
-
   // 5. Khởi tạo Modal DOM
   function createModal() {
     if (document.getElementById('kaola-account-modal')) return;
@@ -863,23 +806,23 @@
               <div id="kaola-pay-details-table" class="kaola-pay-details">
                 <div class="kaola-pay-row">
                   <span class="kaola-pay-label">Ngân hàng:</span>
-                  <span class="kaola-pay-value" id="kaola-pay-bank-name">Ngân hàng Quân Đội (MBBank)</span>
+                  <span class="kaola-pay-value" id="kaola-pay-bank-name">—</span>
                 </div>
                 <div class="kaola-pay-row">
                   <span class="kaola-pay-label">Số tài khoản:</span>
-                  <span class="kaola-pay-value" id="kaola-pay-acc-num">19036788888888</span>
+                  <span class="kaola-pay-value" id="kaola-pay-acc-num">—</span>
                 </div>
                 <div class="kaola-pay-row">
                   <span class="kaola-pay-label">Chủ tài khoản:</span>
-                  <span class="kaola-pay-value" id="kaola-pay-acc-name">CONG TY CO PHAN CONG NGHE KAOLA</span>
+                  <span class="kaola-pay-value" id="kaola-pay-acc-name">—</span>
                 </div>
                 <div class="kaola-pay-row">
                   <span class="kaola-pay-label">Số tiền:</span>
-                  <span class="kaola-pay-value" id="kaola-pay-amount" style="color: #2563eb; font-size: 15px;">499.000 đ</span>
+                  <span class="kaola-pay-value" id="kaola-pay-amount" style="color: #2563eb; font-size: 15px;">—</span>
                 </div>
                 <div class="kaola-pay-row">
                   <span class="kaola-pay-label">Nội dung chuyển khoản:</span>
-                  <span class="kaola-pay-memo" id="kaola-pay-memo-text">KP...</span>
+                  <span class="kaola-pay-memo" id="kaola-pay-memo-text">—</span>
                 </div>
               </div>
 
@@ -905,7 +848,7 @@
 
         <!-- Footer / Legal Open Source Notice -->
         <div class="kaola-modal-footer">
-          Kaola Office miễn phí theo giấy phép <strong>GNU AGPL v3</strong>. Bản quyền © 2026 Kaola HQ.
+          Kaola Office miễn phí theo giấy phép <strong>GNU AGPL v3</strong>. Bản quyền © 2026 ${escapeHtml(CFG.companyName || 'Công ty Cổ phần Đầu tư Kaola')}.
         </div>
       </div>
     </div>
@@ -982,6 +925,10 @@
         renderProfileData();
       } else if (viewName === 'pricing') {
         viewPricing.style.display = 'flex';
+        renderPlans();
+        if (packagesState === 'idle' || packagesState === 'error' || Object.keys(PLANS).length === 0) {
+          fetchDynamicPackages(true);
+        }
       } else if (viewName === 'checkout') {
         viewCheckout.style.display = 'flex';
       }
@@ -1307,7 +1254,7 @@
         btnManualVerify.disabled = true;
         btnManualVerify.innerHTML = '<span>⏳ Đang kiểm tra...</span>';
         const email = (currentUser && currentUser.email) || (inputEmail && inputEmail.value.trim()) || 'guest@kaola.vn';
-        const plan = PLANS[selectedPlanCode] || PLANS['office_pro_1y'] || Object.values(PLANS)[0];
+        const plan = PLANS[selectedPlanCode] || Object.values(PLANS)[0] || { code: selectedPlanCode || '', name: 'Gói Kaola Office', duration_months: 12, amount: 0 };
         await checkOrderStatus(currentOrderCode, email, plan, true);
         btnManualVerify.disabled = false;
         btnManualVerify.innerHTML = '<span>🔄 Tôi đã thanh toán / Kiểm tra ngay</span>';
@@ -1319,7 +1266,7 @@
       const viewCheckout = document.getElementById('kaola-view-checkout');
       if (viewCheckout && viewCheckout.style.display !== 'none' && currentOrderCode) {
         const email = (currentUser && currentUser.email) || (inputEmail && inputEmail.value.trim()) || 'guest@kaola.vn';
-        const plan = PLANS[selectedPlanCode] || PLANS['office_pro_1y'] || Object.values(PLANS)[0];
+        const plan = PLANS[selectedPlanCode] || Object.values(PLANS)[0] || { code: selectedPlanCode || '', name: 'Gói Kaola Office', duration_months: 12, amount: 0 };
         checkOrderStatus(currentOrderCode, email, plan, false);
       } else if (currentUser?.email) {
         syncCustomerSubscription(currentUser.email);
@@ -1331,11 +1278,44 @@
   function updateCheckoutButton() {
     const btn = document.getElementById('kaola-btn-start-checkout');
     if (!btn) return;
-    const plan = PLANS[selectedPlanCode] || PLANS['office_pro_1y'] || Object.values(PLANS)[0];
-    if (!plan) return;
-    const { fullText } = formatPlanPrice(plan);
-    const channel = PAYMENT_CHANNELS[selectedPaymentChannel] || PAYMENT_CHANNELS['vietqr'];
-    btn.innerHTML = `<span>${channel.btnText}</span> <span>(${escapeHtml(fullText)})</span>`;
+    const payMethods = document.querySelector('.kaola-payment-methods');
+    const vatBox = document.querySelector('.kaola-vat-box');
+    const plan = PLANS[selectedPlanCode] || Object.values(PLANS)[0];
+
+    if (!plan) {
+      btn.disabled = true;
+      btn.style.opacity = '0.7';
+      btn.style.background = '#64748b';
+      btn.style.cursor = 'default';
+      btn.innerHTML = packagesState === 'loading'
+        ? '<span>⏳ Đang tải bảng giá từ Kaola ID...</span>'
+        : '<span>Chưa có gói dịch vụ khả dụng từ Kaola ID</span>';
+      if (payMethods) payMethods.style.display = 'none';
+      if (vatBox) vatBox.style.display = 'none';
+      return;
+    }
+
+    const isFree = plan.isFree || plan.amount === 0 || plan.code === 'office-free';
+
+    if (isFree) {
+      btn.disabled = true;
+      btn.style.opacity = '0.7';
+      btn.style.background = '#64748b';
+      btn.style.cursor = 'default';
+      btn.innerHTML = '<span>✅ Gói Miễn Phí Mặc Định (Đang sử dụng)</span>';
+      if (payMethods) payMethods.style.display = 'none';
+      if (vatBox) vatBox.style.display = 'none';
+    } else {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.style.background = '';
+      btn.style.cursor = 'pointer';
+      const { fullText } = formatPlanPrice(plan);
+      const channel = PAYMENT_CHANNELS[selectedPaymentChannel] || PAYMENT_CHANNELS['vietqr'];
+      btn.innerHTML = `<span>${channel.btnText}</span> <span>(${escapeHtml(fullText)})</span>`;
+      if (payMethods) payMethods.style.display = 'flex';
+      if (vatBox) vatBox.style.display = 'block';
+    }
   }
 
   // Chuẩn hóa định dạng giá và chu kỳ, chống trùng lặp /tháng /tháng hoặc /năm /năm
@@ -1359,13 +1339,50 @@
     return { purePrice, period, fullText };
   }
 
-  // 7. Render danh sách gói cước động
+  // 7. Render danh sách gói cước động (100% từ Kaola ID)
   function renderPlans() {
     const container = document.getElementById('kaola-plans-container');
     if (!container) return;
 
-    let html = '';
     const planKeys = Object.keys(PLANS).filter(key => !PLANS[key].isInternal);
+
+    if (planKeys.length === 0) {
+      if (packagesState === 'loading' || packagesState === 'idle') {
+        container.innerHTML = `
+          <div style="grid-column: 1 / -1; text-align: center; padding: 28px 16px; color: #475569; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 12px;">
+            <div style="font-size: 14px; font-weight: 600; margin-bottom: 4px;">⏳ Đang tải danh sách gói dịch vụ từ Kaola ID...</div>
+            <div style="font-size: 12px; color: #64748b;">Đồng bộ trực tiếp từ hệ thống quản trị id.kaola.vn</div>
+          </div>
+        `;
+      } else if (packagesState === 'error') {
+        container.innerHTML = `
+          <div style="grid-column: 1 / -1; text-align: center; padding: 24px 16px; color: #991b1b; background: #fef2f2; border: 1px solid #fecaca; border-radius: 12px;">
+            <div style="font-size: 14px; font-weight: 600; margin-bottom: 6px;">Không thể tải bảng giá từ Kaola ID</div>
+            <div style="font-size: 12px; color: #7f1d1d; margin-bottom: 12px;">${escapeHtml(packagesError || 'Vui lòng kiểm tra kết nối mạng tới id.kaola.vn rồi thử lại.')}</div>
+            <button type="button" id="kaola-btn-retry-packages" class="kaola-btn-secondary" style="padding: 6px 14px; font-size: 12px; cursor: pointer;">🔄 Thử tải lại</button>
+          </div>
+        `;
+        const retryBtn = document.getElementById('kaola-btn-retry-packages');
+        if (retryBtn) {
+          retryBtn.addEventListener('click', () => fetchDynamicPackages(true));
+        }
+      } else {
+        container.innerHTML = `
+          <div style="grid-column: 1 / -1; text-align: center; padding: 24px 16px; color: #475569; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 12px;">
+            <div style="font-size: 14px; font-weight: 600; margin-bottom: 6px;">Hiện chưa có gói dịch vụ Kaola Office nào đang mở trên Kaola ID</div>
+            <button type="button" id="kaola-btn-retry-packages" class="kaola-btn-secondary" style="padding: 6px 14px; font-size: 12px; cursor: pointer;">🔄 Tải lại</button>
+          </div>
+        `;
+        const retryBtn = document.getElementById('kaola-btn-retry-packages');
+        if (retryBtn) {
+          retryBtn.addEventListener('click', () => fetchDynamicPackages(true));
+        }
+      }
+      updateCheckoutButton();
+      return;
+    }
+
+    let html = '';
     planKeys.forEach(key => {
       const p = PLANS[key];
       const isActive = key === selectedPlanCode;
@@ -1403,66 +1420,190 @@
     updateCheckoutButton();
   }
 
-  // 8. Tải danh mục gói động từ Super Admin
-  async function fetchDynamicPackages() {
-    try {
-      const res = await fetch(`${KAOLA_SERVER_URL}/api/v1/office/packages?_t=${Date.now()}`, {
-        headers: { 'Cache-Control': 'no-cache' },
-        signal: AbortSignal.timeout ? AbortSignal.timeout(1500) : undefined
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (data.status === 'success' && Array.isArray(data.packages) && data.packages.length > 0) {
-        const paidPkgs = data.packages.filter(p => p.price > 0);
-        if (paidPkgs.length > 0) {
-          const newPlans = {};
-          paidPkgs.forEach(p => {
-            let purePrice = '';
-            if (typeof p.price === 'number' && p.price > 0) {
-              purePrice = new Intl.NumberFormat('vi-VN').format(p.price) + ' đ';
-            } else if (p.price_formatted) {
-              purePrice = p.price_formatted.replace(/\s*\/\s*(tháng|năm|month|year)/gi, '').trim();
-            }
-            const cycleText = p.billing_cycle === 'yearly' ? '/ năm' : (p.billing_cycle === 'monthly' ? '/ tháng' : '');
+  // 8. Tải danh mục gói cước từ 1 nguồn duy nhất: Kaola ID (Ecosystem Service #8 - service=office)
+  async function fetchDynamicPackages(force = false) {
+    if (packagesFetchPromise && !force) {
+      return packagesFetchPromise;
+    }
 
-            newPlans[p.slug] = {
-              code: p.slug,
-              name: p.name,
-              duration_months: p.duration_months,
-              amount: p.price,
-              priceFormatted: purePrice,
-              periodText: cycleText,
-              badge: p.badge_text || (p.is_popular ? 'Khuyên dùng' : ''),
-              isPopular: p.is_popular,
-              features: p.features || []
-            };
+    const endpoints = CFG.getIdApiUrls(KAOLA_ID_PACKAGES_PATH);
+
+    const featureNameMap = {
+      'word_excel_ppt': 'Soạn thảo Word, Excel, PowerPoint',
+      'nd30_templates': 'Mẫu văn bản chuẩn Nghị định 30',
+      'ai_copilot': 'Trợ lý AI Copilot thông minh',
+      'ad_free': '100% Không banner quảng cáo',
+      'cloud_sync': 'Đồng bộ hóa đám mây Kaola Drive',
+      'multi_mailboxes': 'Hộp thư Email theo tên miền riêng',
+      'realtime_collab': 'Cộng tác chỉnh sửa thời gian thực',
+      'version_history': 'Lịch sử phiên bản tệp tin',
+      'custom_domain': 'Tích hợp tên miền doanh nghiệp',
+      'vat_invoice': 'Hỗ trợ xuất hóa đơn VAT điện tử',
+      'priority_support': 'Hỗ trợ kỹ thuật chuyên trách 24/7'
+    };
+
+    packagesState = 'loading';
+    packagesError = '';
+    if (Object.keys(PLANS).length === 0) {
+      renderPlans();
+    }
+
+    packagesFetchPromise = (async () => {
+      let lastErr = '';
+      for (const url of endpoints) {
+        try {
+          const sep = url.includes('?') ? '&' : '?';
+          const res = await fetch(`${url}${sep}_t=${Date.now()}`, {
+            headers: {
+              'Accept': 'application/json',
+              'Cache-Control': 'no-cache'
+            },
+            signal: AbortSignal.timeout ? AbortSignal.timeout(3000) : undefined
           });
-          PLANS = newPlans;
-          if (!PLANS[selectedPlanCode]) {
-            selectedPlanCode = paidPkgs.find(p => p.is_popular)?.slug || paidPkgs[0].slug;
+          if (!res.ok) {
+            lastErr = `HTTP ${res.status}`;
+            continue;
           }
-          renderPlans();
+          const contentType = res.headers.get('content-type') || '';
+          if (!contentType.includes('application/json')) {
+            lastErr = 'Phản hồi không phải JSON hợp lệ';
+            continue;
+          }
+
+          const data = await res.json();
+          const allPkgs = Array.isArray(data.packages)
+            ? data.packages
+            : (Array.isArray(data.data) ? data.data : null);
+
+          if ((data.status === 'success' || data.success === true) && Array.isArray(allPkgs)) {
+            allPkgs.sort((a, b) => {
+              const orderDiff = (Number(a.sort_order ?? 999)) - (Number(b.sort_order ?? 999));
+              if (orderDiff !== 0) return orderDiff;
+              return (Number(a.id ?? 0)) - (Number(b.id ?? 0));
+            });
+
+            const newPlans = {};
+            allPkgs.forEach(p => {
+              const priceYearly = Number(p.price_yearly || 0);
+              const priceMonthly = Number(p.price_monthly || 0);
+              const priceLifetime = Number(p.price_lifetime || 0);
+              const fallbackPrice = Number(p.price || 0);
+
+              let amount = 0;
+              let durationMonths = 0;
+              let cycleText = '/ Vĩnh viễn';
+              let isFree = false;
+
+              if (priceYearly > 0) {
+                amount = priceYearly;
+                durationMonths = 12;
+                cycleText = '/ năm';
+              } else if (priceMonthly > 0) {
+                amount = priceMonthly;
+                durationMonths = 1;
+                cycleText = '/ tháng';
+              } else if (priceLifetime > 0) {
+                amount = priceLifetime;
+                durationMonths = 0;
+                cycleText = '/ Vĩnh viễn';
+              } else if (fallbackPrice > 0) {
+                amount = fallbackPrice;
+                durationMonths = p.billing_cycle === 'monthly' ? 1 : 12;
+                cycleText = durationMonths === 1 ? '/ tháng' : '/ năm';
+              } else {
+                amount = 0;
+                durationMonths = 0;
+                cycleText = '/ Vĩnh viễn';
+                isFree = true;
+              }
+
+              const purePrice = isFree
+                ? '0 đ'
+                : (new Intl.NumberFormat('vi-VN').format(amount) + ' đ');
+
+              const rawFeatures = Array.isArray(p.features) ? p.features : [];
+              const humanFeatures = rawFeatures.filter(f => typeof f === 'string' && !/^[a-z0-9_]+$/.test(f.trim()));
+              const mappedSource = humanFeatures.length > 0
+                ? humanFeatures
+                : rawFeatures.map(f => featureNameMap[f] || f);
+
+              const cleanFeatures = mappedSource
+                .filter(f => typeof f === 'string' && f.trim() !== '')
+                .filter((f, idx, arr) => arr.indexOf(f) === idx)
+                .slice(0, 6);
+
+              const badgeText = p.badge_text
+                || (p.is_popular ? 'Phổ biến' : (p.is_recommended ? 'Khuyên dùng' : (isFree ? 'Cơ bản' : '')));
+
+              newPlans[p.slug] = {
+                id: p.id,
+                sku: p.sku || '',
+                code: p.slug,
+                name: p.name,
+                duration_months: p.duration_months || durationMonths,
+                amount: amount,
+                priceFormatted: purePrice,
+                periodText: cycleText,
+                badge: badgeText,
+                isPopular: Boolean(p.is_popular || p.is_recommended),
+                isFree: isFree,
+                features: cleanFeatures
+              };
+            });
+
+            PLANS = newPlans;
+            packagesState = 'loaded';
+            packagesError = '';
+
+            if (!selectedPlanCode || !PLANS[selectedPlanCode]) {
+              const preferred = allPkgs.find(p => p.is_popular || p.is_recommended)
+                || allPkgs.find(p => (Number(p.price_yearly || 0) + Number(p.price_monthly || 0) + Number(p.price_lifetime || 0)) > 0)
+                || allPkgs[0];
+              selectedPlanCode = preferred ? preferred.slug : '';
+            }
+
+            renderPlans();
+            return true;
+          }
+        } catch (e) {
+          lastErr = e && e.message ? e.message : 'Lỗi kết nối';
         }
       }
-    } catch (e) {
-      console.warn('Lỗi tải danh mục gói cước từ máy chủ:', e);
+
+      if (Object.keys(PLANS).length === 0) {
+        packagesState = 'error';
+        packagesError = lastErr || 'Không thể kết nối tới Kaola ID (id.kaola.vn).';
+        renderPlans();
+      }
+      return false;
+    })();
+
+    try {
+      return await packagesFetchPromise;
+    } finally {
+      packagesFetchPromise = null;
     }
   }
 
-  // 9. Khởi tạo phiên thanh toán trên KaolaPay
+  // 9. Khởi tạo phiên thanh toán an toàn qua Kaola ID (Server tự đối chiếu giá từ DB, không lưu khóa bí mật phía client)
   async function initiatePayment(planCode, customerEmail, channelCode = selectedPaymentChannel) {
-    const plan = PLANS[planCode] || PLANS['office_pro_1y'] || Object.values(PLANS)[0];
+    const plan = PLANS[planCode] || Object.values(PLANS)[0];
+    if (!plan) {
+      showAlert('Chưa tải được danh sách gói từ Kaola ID. Vui lòng thử tải lại bảng giá.');
+      return;
+    }
+    if (plan.isFree || plan.amount === 0 || plan.code === 'office-free') {
+      showAlert('Bạn đang sử dụng gói Miễn phí mặc định.');
+      return;
+    }
+    const billingCycle = plan.duration_months === 1 ? 'monthly' : (plan.duration_months === 0 ? 'lifetime' : 'yearly');
     const payload = {
-      target_service_code: APP_CODE,
-      target_tenant_id: customerEmail,
+      service_code: 'office',
       plan_code: plan.code,
-      plan_name: plan.name,
-      duration_months: plan.duration_months,
-      amount: plan.amount,
+      billing_cycle: billingCycle,
       customer_name: (currentUser && currentUser.name) || customerEmail.split('@')[0],
       customer_email: customerEmail,
-      payment_channel_code: channelCode,
-      description: `Nâng cấp ${plan.name}`
+      payment_channel_code: channelCode
     };
 
     const isVatRequested = document.getElementById('kaola-vat-toggle')?.checked;
@@ -1475,54 +1616,51 @@
     }
 
     let order = null;
+    let lastError = '';
+    const sessionUrls = CFG.getPayApiUrls(CFG.checkoutPackageSessionPath || '/api/v1/checkout/package-sessions');
 
-    try {
-      const rawJson = JSON.stringify(payload);
-      const timestamp = Math.floor(Date.now() / 1000).toString();
-      const signature = await generateHmacSha256(SECRET_KEY, `${timestamp}.${rawJson}`);
+    for (const url of sessionUrls) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
 
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
 
-      const res = await fetch(`${KAOLAPAY_BASE_URL}/api/v1/checkout/sessions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-Kaola-App-Code': APP_CODE,
-          'X-Kaola-Timestamp': timestamp,
-          'X-Kaola-Signature': signature
-        },
-        body: rawJson,
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && data.data) {
-          order = data.data;
+        const ct = res.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) {
+          lastError = `Máy chủ trả về phản hồi không hợp lệ (HTTP ${res.status})`;
+          continue;
         }
+
+        const data = await res.json();
+        if (res.ok && data.success && data.data) {
+          order = data.data;
+          break;
+        }
+        lastError = data.message || `Không thể khởi tạo phiên thanh toán (HTTP ${res.status})`;
+      } catch (e) {
+        lastError = e && e.name === 'AbortError'
+          ? 'Kết nối tới cổng thanh toán Kaola ID bị quá thời gian chờ.'
+          : (e && e.message ? e.message : 'Lỗi kết nối mạng tới Kaola ID.');
       }
-    } catch (e) {
-      console.warn('Kết nối KaolaPay API trực tiếp gặp độ trễ, kích hoạt tạo mã VietQR tức thì:', e);
     }
 
-    // Nếu API phản hồi chậm hoặc đang offline, tự động tạo phiên VietQR tức thì để người dùng không bị chờ đợi
+    // Tuyệt đối không sinh mã đơn / số tài khoản giả khi server lỗi để tránh khách chuyển khoản không khớp đơn
     if (!order) {
-      const fallbackCode = 'KP' + Math.floor(Date.now() / 1000).toString().slice(-8);
-      order = {
-        order_code: fallbackCode,
-        checkout_url: `${KAOLAPAY_BASE_URL}/checkout/${fallbackCode}`,
-        amount: plan.amount,
-        qr_url: `https://img.vietqr.io/image/970422-19036788888888-compact2.png?amount=${plan.amount}&addInfo=${fallbackCode}&accountName=CONG%20TY%20CO%20PHAN%20CONG%20NGHE%20KAOLA`,
-        bank_account: {
-          bank_code: 'MB',
-          bank_name: 'Ngân hàng TMCP Quân Đội (MBBank)',
-          account_number: '19036788888888',
-          account_name: 'CONG TY CO PHAN CONG NGHE KAOLA'
-        }
-      };
+      updateCheckoutButton();
+      const btnStartErr = document.getElementById('kaola-btn-start-checkout');
+      if (btnStartErr) btnStartErr.disabled = false;
+      showAlert(`Không thể khởi tạo phiên thanh toán trên Kaola ID: ${lastError || 'Vui lòng kiểm tra kết nối mạng và thử lại.'}`);
+      return;
     }
 
     currentOrderCode = order.order_code;
@@ -1552,14 +1690,17 @@
       if (payDetails) payDetails.style.display = 'flex';
       if (statusText) statusText.textContent = 'Đang chờ chuyển khoản... Hệ thống sẽ tự động kích hoạt sau 5-15 giây.';
 
-      document.getElementById('kaola-checkout-qr-img').src = order.qr_url;
-      document.getElementById('kaola-pay-amount').textContent = plan.priceFormatted;
+      document.getElementById('kaola-checkout-qr-img').src = order.qr_url || '';
+      const serverAmountText = typeof order.amount === 'number' && order.amount > 0
+        ? (new Intl.NumberFormat('vi-VN').format(order.amount) + ' đ')
+        : plan.priceFormatted;
+      document.getElementById('kaola-pay-amount').textContent = serverAmountText;
       document.getElementById('kaola-pay-memo-text').textContent = order.order_code;
 
       if (order.bank_account) {
-        document.getElementById('kaola-pay-bank-name').textContent = order.bank_account.bank_name || 'MBBank';
-        document.getElementById('kaola-pay-acc-num').textContent = order.bank_account.account_number || '19036788888888';
-        document.getElementById('kaola-pay-acc-name').textContent = order.bank_account.account_name || 'CONG TY CO PHAN CONG NGHE KAOLA';
+        document.getElementById('kaola-pay-bank-name').textContent = order.bank_account.bank_name || '—';
+        document.getElementById('kaola-pay-acc-num').textContent = order.bank_account.account_number || '—';
+        document.getElementById('kaola-pay-acc-name').textContent = order.bank_account.account_name || '—';
       }
 
       if (webLink) {
@@ -1641,25 +1782,33 @@
   // Kiểm tra trạng thái đơn hàng (hỗ trợ cả REST API và Web Endpoint, kèm CORS)
   async function checkOrderStatus(orderCode, customerEmail, plan, isManual = false) {
     if (!orderCode) return false;
+    const statusUrls = [
+      ...CFG.getPayApiUrls(`/api/v1/checkout/${encodeURIComponent(orderCode)}/status`),
+      ...CFG.getPayApiUrls(`/checkout/${encodeURIComponent(orderCode)}/status`)
+    ];
     try {
-      let res = await fetch(`${KAOLAPAY_BASE_URL}/api/v1/checkout/${orderCode}/status`, {
-        headers: { 'Accept': 'application/json' }
-      }).catch(() => null);
-
-      if (!res || !res.ok) {
-        res = await fetch(`${KAOLAPAY_BASE_URL}/checkout/${orderCode}/status`, {
-          headers: { 'Accept': 'application/json' }
-        }).catch(() => null);
+      let data = null;
+      for (const url of statusUrls) {
+        try {
+          const res = await fetch(url, {
+            headers: { 'Accept': 'application/json' },
+            signal: AbortSignal.timeout ? AbortSignal.timeout(3000) : undefined
+          });
+          if (!res.ok) continue;
+          const ct = res.headers.get('content-type') || '';
+          if (!ct.includes('application/json')) continue;
+          data = await res.json();
+          break;
+        } catch (e) {}
       }
 
-      if (!res || !res.ok) {
+      if (!data) {
         if (isManual) {
           showAlert('Đang kết nối cổng KaolaPay... Vui lòng thử lại sau vài giây.');
         }
         return false;
       }
 
-      const data = await res.json();
       if (data.is_paid) {
         stopPolling();
         onPaymentSuccess(customerEmail, plan);
@@ -1715,7 +1864,7 @@
       email: customerEmail,
       is_vip: true,
       plan: 'pro',
-      plan_code: plan?.code || 'office_pro_1y',
+      plan_code: plan?.code || selectedPlanCode || '',
       plan_name: plan?.name || 'Gói Kaola Office Pro',
       order_code: currentOrderCode || (currentUser && currentUser.order_code) || '',
       paid_at: new Date().toLocaleString('vi-VN'),
@@ -1783,8 +1932,8 @@
   function init() {
     createModal();
     loadAccount();
-    // Trì hoãn gọi gói động sau khi giao diện đã sẵn sàng
-    setTimeout(fetchDynamicPackages, 3000);
+    // Tải ngay danh mục gói cước từ nguồn duy nhất Kaola ID
+    fetchDynamicPackages();
     setupSidebarObserver();
   }
 
